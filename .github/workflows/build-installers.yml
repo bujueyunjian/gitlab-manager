@@ -1,0 +1,62 @@
+name: Build installers
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  build:
+    name: ${{ matrix.name }}
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 60
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - name: macOS Universal
+            os: macos-26
+            args: --target universal-apple-darwin --bundles dmg -- --locked
+          - name: Windows x64
+            os: windows-2025
+            args: --target x86_64-pc-windows-msvc --bundles nsis,msi -- --locked
+          - name: Linux x64
+            os: ubuntu-24.04
+            args: --target x86_64-unknown-linux-gnu --bundles deb,appimage -- --locked
+          - name: Linux ARM64
+            os: ubuntu-24.04-arm
+            args: --target aarch64-unknown-linux-gnu --bundles deb,appimage -- --locked
+
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          persist-credentials: false
+      - uses: pnpm/setup@v3
+        with:
+          runtime: node@24
+          require-lockfile: true
+      - name: Install Linux dependencies
+        if: runner.os == 'Linux'
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends build-essential pkg-config file libwebkit2gtk-4.1-dev libayatana-appindicator3-dev librsvg2-dev libssl-dev libxdo-dev patchelf xdg-utils
+      - name: Set up Rust
+        run: rustup update stable --no-self-update
+      - name: Add macOS targets
+        if: runner.os == 'macOS'
+        run: rustup target add aarch64-apple-darwin x86_64-apple-darwin
+      - name: Check frontend and source privacy
+        run: pnpm check
+      - name: Test Rust
+        run: cargo test --manifest-path src-tauri/Cargo.toml --locked
+      # The official action handles package discovery and uploads, without a custom release script.
+      - name: Build and upload installers
+        uses: tauri-apps/tauri-action@v1
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        with:
+          tauriScript: pnpm tauri
+          args: ${{ matrix.args }}
+          uploadWorkflowArtifacts: true
+          workflowArtifactNamePattern: "[mainBinaryName]-[version]-[platform]-[arch]-[bundle]"

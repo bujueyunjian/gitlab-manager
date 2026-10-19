@@ -23,6 +23,22 @@
 
 “补齐并更新”仅在成功读取全部配置后判断是否缺失。重复匹配需要选择具体 Hook，查询失败不会被当作不存在。跨仓库操作没有事务性；执行前的复查也不能替代 GitLab 服务端的原子并发控制。
 
+## 构建安装包
+
+在 GitHub 的 **Actions → Build installers → Run workflow** 中手动触发构建。成功后，在该次运行的 **Artifacts** 下载对应安装包。工作流使用 [Tauri 官方 Action](https://github.com/tauri-apps/tauri-action)，产物名称包含版本、系统、架构和格式。
+
+| 系统    | 架构                                   | 安装包              |
+| ------- | -------------------------------------- | ------------------- |
+| macOS   | Universal，包含 Apple Silicon 与 Intel | `.dmg`              |
+| Windows | x64                                    | `.exe`、`.msi`      |
+| Linux   | x64、ARM64                             | `.deb`、`.AppImage` |
+
+macOS 使用 ad-hoc 签名，尚未使用开发者证书或完成公证；Windows 安装包尚未代码签名。Linux 需要图形桌面及可用的 Secret Service（如 GNOME Keyring）来保存令牌。构建成功不等于已完成各系统的安装与真实 GitLab 验收。
+
+Linux 的 AppImage 从构建产物解压后，需要在文件属性中开启“允许作为程序执行”；也可以选择 `.deb` 安装。
+
+此工作流只生成构建产物，不创建版本标签或发布 GitHub Release。
+
 ## 开发
 
 需要 Node.js 24 LTS、pnpm 12、Rust 稳定版（最低 1.95）及当前平台的 [Tauri 系统依赖](https://v2.tauri.app/start/prerequisites/)。构建工具版本由 `packageManager` 和锁文件固定。
@@ -43,7 +59,7 @@ cargo clippy --manifest-path src-tauri/Cargo.toml --all-targets -- -D warnings
 pnpm desktop:build
 ```
 
-安装包位于 `src-tauri/target/release/bundle/`。本地构建不自动签名、公证或发布。
+安装包位于 `src-tauri/target/release/bundle/`；指定 `--target` 时位于对应目标目录下。本地构建采用相同的打包配置，不自动公证或发布。
 
 macOS 的钥匙串可能在应用重建后要求重新授权访问令牌，需要用户在系统窗口中处理。开发版使用独立的数据目录和凭据命名空间，避免影响正式版连接。
 
