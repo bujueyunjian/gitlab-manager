@@ -43,6 +43,8 @@ Linux 的 AppImage 从构建产物解压后，需要在文件属性中开启“�
 
 发布前同步更新 `package.json`、`src-tauri/Cargo.toml`、`src-tauri/tauri.conf.json` 的版本及锁文件，再提交并推送对应标签，例如 `v0.1.1`。标签必须与应用版本一致；某个平台失败时，Release 保持草稿状态，失败原因可在 Actions 查看。
 
+已有成功构建时，可先为同一源码提交创建标签和 Release 草稿，再运行 **Publish installers**，填写构建运行 ID 与标签。它会核对源码一致后直接上传原安装包并发布，避免重新构建；已发布的版本不能通过此流程覆盖。
+
 ## 开发
 
 需要 Node.js 24 LTS、pnpm 12、Rust 稳定版（最低 1.95）及当前平台的 [Tauri 系统依赖](https://v2.tauri.app/start/prerequisites/)。构建工具版本由 `packageManager` 和锁文件固定。

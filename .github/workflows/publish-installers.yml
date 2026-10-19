@@ -1,0 +1,43 @@
+name: Publish installers
+
+on:
+  workflow_dispatch:
+    inputs:
+      build_run:
+        description: Successful Build installers run ID
+        required: true
+        type: string
+      tag:
+        description: Version tag with an existing draft release
+        required: true
+        type: string
+
+permissions:
+  actions: read
+  contents: write
+
+jobs:
+  publish:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    env:
+      GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+      GH_REPO: ${{ github.repository }}
+      BUILD_RUN: ${{ inputs.build_run }}
+      RELEASE_TAG: ${{ inputs.tag }}
+    steps:
+      # Promote the original artifacts without rebuilding or routing them through a local machine.
+      - name: Verify build and draft release
+        run: |
+          build_sha=$(gh run view "$BUILD_RUN" --json headSha,conclusion,workflowName --jq 'if .conclusion == "success" and .workflowName == "Build installers" then .headSha else error("A successful installer build is required") end')
+          tag_sha=$(gh api "repos/$GH_REPO/commits/$RELEASE_TAG" --jq .sha)
+          test "$build_sha" = "$tag_sha"
+          test "$(gh release view "$RELEASE_TAG" --json isDraft --jq .isDraft)" = true
+      - name: Download installers
+        run: gh run download "$BUILD_RUN" --dir installers
+      - name: Upload installers
+        run: |
+          sha256sum installers/*/*
+          gh release upload "$RELEASE_TAG" installers/*/* --clobber
+      - name: Publish completed release
+        run: gh release edit "$RELEASE_TAG" --draft=false
