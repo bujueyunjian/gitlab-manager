@@ -1,0 +1,22 @@
+node_modules/
+dist/
+target/
+src-tauri/target/
+src-tauri/gen/
+.cache/
+.local/
+.DS_Store
+*.log
+*.db
+*.db-*
+*.sqlite
+*.sqlite-*
+.env
+.env.*
+!.env.example
+coverage/
+# Design references and local screenshots are not part of the public source.
+prototype/
+prototype-preview.jpg
+screenshots/
+*.local.json

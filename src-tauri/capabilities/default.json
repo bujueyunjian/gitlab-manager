@@ -1,0 +1,7 @@
+{
+  "$schema": "../gen/schemas/desktop-schema.json",
+  "identifier": "main",
+  "description": "Local application window; GitLab access is handled by validated Rust commands.",
+  "windows": ["main"],
+  "permissions": ["core:default"]
+}
