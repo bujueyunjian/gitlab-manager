@@ -2,9 +2,11 @@ name: Build installers
 
 on:
   workflow_dispatch:
+  push:
+    tags: ["v*"]
 
 permissions:
-  contents: read
+  contents: write
 
 jobs:
   build:
@@ -36,6 +38,18 @@ jobs:
         with:
           runtime: node@24
           require-lockfile: true
+      - name: Verify release version
+        if: startsWith(github.ref, 'refs/tags/')
+        shell: bash
+        env:
+          RELEASE_TAG: ${{ github.ref_name }}
+        run: |
+          node --input-type=module <<'NODE'
+          import { strict as assert } from 'node:assert';
+          import { readFileSync } from 'node:fs';
+          const { version } = JSON.parse(readFileSync('src-tauri/tauri.conf.json', 'utf8'));
+          assert.equal(process.env.RELEASE_TAG, `v${version}`, 'Tag must match the application version');
+          NODE
       - name: Install Linux dependencies
         if: runner.os == 'Linux'
         run: |
@@ -58,5 +72,27 @@ jobs:
         with:
           tauriScript: pnpm tauri
           args: ${{ matrix.args }}
+          tagName: ${{ startsWith(github.ref, 'refs/tags/') && github.ref_name || '' }}
+          releaseName: GitLab Manager v__VERSION__
+          releaseBody: "早期预发布版。请按系统和架构下载附件；签名状态和安装要求见仓库 README。"
+          releaseDraft: true
+          prerelease: true
+          generateReleaseNotes: true
+          uploadUpdaterJson: false
           uploadWorkflowArtifacts: true
           workflowArtifactNamePattern: "[mainBinaryName]-[version]-[platform]-[arch]-[bundle]"
+
+  publish:
+    name: Publish release
+    needs: build
+    if: startsWith(github.ref, 'refs/tags/')
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    steps:
+      # Keep the release in draft until every platform has uploaded its installers.
+      - name: Publish completed release
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          GH_REPO: ${{ github.repository }}
+          RELEASE_TAG: ${{ github.ref_name }}
+        run: gh release edit "$RELEASE_TAG" --draft=false

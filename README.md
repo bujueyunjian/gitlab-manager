@@ -4,7 +4,9 @@
 
 这是独立的开源桌面客户端，与 GitLab 官方没有隶属关系。许可证为 [MIT](LICENSE)。
 
-当前为早期版本：已完成 macOS 本机构建及模拟 GitLab 的批量流程验证；真实 GitLab 环境、Windows 和 Linux 尚未完成验收。默认使用浅色界面。
+当前为早期版本：macOS、Windows、Linux x64 和 Linux ARM64 的自动构建与测试已通过，已完成 macOS 本地运行及模拟 GitLab 的批量流程验证；真实 GitLab 环境和 Windows、Linux 的安装运行尚未完成验收。默认使用浅色界面。
+
+在 [Releases](https://github.com/bujueyunjian/gitlab-manager/releases) 下载适合当前系统的安装包。
 
 ## 第一次使用
 
@@ -25,7 +27,9 @@
 
 ## 构建安装包
 
-在 GitHub 的 **Actions → Build installers → Run workflow** 中手动触发构建。成功后，在该次运行的 **Artifacts** 下载对应安装包。工作流使用 [Tauri 官方 Action](https://github.com/tauri-apps/tauri-action)，产物名称包含版本、系统、架构和格式。
+工作流使用 [Tauri 官方 Action](https://github.com/tauri-apps/tauri-action) 构建并上传安装包。推送 `v*` 版本标签后会自动构建；全部平台成功后，自动发布 GitHub 预发布 Release。
+
+开发测试也可以在 **Actions → Build installers → Run workflow** 中选择分支手动构建，在该次运行的 **Artifacts** 下载产物。分支构建不会发布 Release。
 
 | 系统    | 架构                                   | 安装包              |
 | ------- | -------------------------------------- | ------------------- |
@@ -37,7 +41,7 @@ macOS 使用 ad-hoc 签名，尚未使用开发者证书或完成公证；Window
 
 Linux 的 AppImage 从构建产物解压后，需要在文件属性中开启“允许作为程序执行”；也可以选择 `.deb` 安装。
 
-此工作流只生成构建产物，不创建版本标签或发布 GitHub Release。
+发布前同步更新 `package.json`、`src-tauri/Cargo.toml`、`src-tauri/tauri.conf.json` 的版本及锁文件，再提交并推送对应标签，例如 `v0.1.1`。标签必须与应用版本一致；某个平台失败时，Release 保持草稿状态，失败原因可在 Actions 查看。
 
 ## 开发
 
