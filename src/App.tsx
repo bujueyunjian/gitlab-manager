@@ -161,8 +161,8 @@ export default function App() {
               <Orbit size={24} />
             </span>
             <div>
-              <strong>GitLab 管理台</strong>
-              <small>RESOURCE WORKSPACE</small>
+              <strong>GitLab 管理器</strong>
+              <small>权限与 Webhook</small>
             </div>
           </div>
           <div>

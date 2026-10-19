@@ -58,7 +58,7 @@ impl GitLab {
             .redirect(Policy::none()) // Never forward a credential to a redirected origin.
             .connect_timeout(Duration::from_secs(10))
             .timeout(Duration::from_secs(30))
-            .user_agent(concat!("GitLab-Console/", env!("CARGO_PKG_VERSION")))
+            .user_agent(concat!("GitLab-Manager/", env!("CARGO_PKG_VERSION")))
             .build()?;
         Ok(Self {
             client,

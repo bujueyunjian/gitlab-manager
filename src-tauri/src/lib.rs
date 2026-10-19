@@ -276,5 +276,5 @@ pub fn run() {
             open_project
         ])
         .run(tauri::generate_context!())
-        .expect("Failed to start GitLab Console");
+        .expect("Failed to start GitLab Manager");
 }

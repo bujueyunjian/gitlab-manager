@@ -1,4 +1,4 @@
-# GitLab 管理台
+# GitLab 管理器
 
 批量管理多个 GitLab 仓库的成员权限与 Webhook。
 

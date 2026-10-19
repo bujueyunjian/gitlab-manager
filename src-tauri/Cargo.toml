@@ -1,5 +1,5 @@
 [package]
-name = "gitlab-console"
+name = "gitlab-manager"
 version = "0.1.0"
 description = "A desktop workspace for GitLab permissions and webhooks"
 edition = "2024"
@@ -7,7 +7,7 @@ rust-version = "1.95"
 license = "MIT"
 
 [lib]
-name = "gitlab_console"
+name = "gitlab_manager"
 crate-type = ["staticlib", "cdylib", "rlib"]
 
 [build-dependencies]

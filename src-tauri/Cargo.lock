@@ -1483,7 +1483,7 @@ dependencies = [
 ]
 
 [[package]]
-name = "gitlab-console"
+name = "gitlab-manager"
 version = "0.1.0"
 dependencies = [
  "chrono",

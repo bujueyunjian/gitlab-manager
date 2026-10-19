@@ -159,8 +159,8 @@ small {
 }
 .brand small {
   display: block;
-  font-size: 8px;
-  letter-spacing: 1.1px;
+  font-size: 10px;
+  letter-spacing: 0.2px;
   color: var(--muted);
   white-space: nowrap;
 }
@@ -1343,10 +1343,6 @@ dialog::backdrop {
   .sidebar {
     padding-left: 11px;
     padding-right: 11px;
-  }
-  .brand small {
-    font-size: 7px;
-    letter-spacing: 0.7px;
   }
   .brand {
     gap: 8px;
