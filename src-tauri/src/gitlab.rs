@@ -23,9 +23,9 @@ pub struct GitLab {
 
 pub fn normalize_url(input: &str) -> Result<Url> {
     let mut url = Url::parse(input.trim()).map_err(|_| invalid("请输入完整的 GitLab 实例地址"))?;
-    let local = matches!(url.host_str(), Some("localhost" | "127.0.0.1" | "[::1]"));
-    if url.scheme() != "https" && !(url.scheme() == "http" && local) {
-        return Err(invalid("实例地址必须使用 HTTPS；仅本机测试允许 HTTP"));
+    // Self-managed instances can explicitly use HTTP; keep the protocol chosen by the user.
+    if !matches!(url.scheme(), "http" | "https") {
+        return Err(invalid("实例地址必须使用 HTTP 或 HTTPS"));
     }
     if url.host_str().is_none()
         || !url.username().is_empty()
@@ -349,18 +349,39 @@ mod tests {
 
     #[test]
     fn supports_self_managed_relative_url_roots() {
-        let base = normalize_url("https://gitlab.example.com/gitlab").unwrap();
-        assert_eq!(
-            project_reference(&base, "https://gitlab.example.com/gitlab/team/app").unwrap(),
-            ProjectReference::Path("team/app".into())
-        );
+        for scheme in ["http", "https"] {
+            let address = format!("{scheme}://gitlab.example.com:8080/gitlab");
+            let base = normalize_url(&address).unwrap();
+            assert_eq!(base.as_str(), format!("{address}/"));
+            assert_eq!(
+                project_reference(&base, &format!("{address}/team/app")).unwrap(),
+                ProjectReference::Path("team/app".into())
+            );
+            let client = GitLab::new(&address, "fictional-access-token".into()).unwrap();
+            assert_eq!(
+                client.api_url("user").unwrap().as_str(),
+                format!("{address}/api/v4/user")
+            );
+        }
+    }
+
+    #[test]
+    fn rejects_unsafe_instance_urls() {
         let mut credential_url = Url::parse("https://gitlab.example.com").unwrap();
         credential_url.set_username("example-user").unwrap();
         credential_url
             .set_password(Some("invalid-placeholder"))
             .unwrap();
         assert!(normalize_url(credential_url.as_str()).is_err());
-        assert!(normalize_url("http://gitlab.example.com").is_err());
+        for input in [
+            "ftp://gitlab.example.com",
+            "file:///gitlab",
+            "http://gitlab.example.com?token=fictional-access-token",
+            "http://gitlab.example.com#fragment",
+            "http://gitlab.example.com/gitlab/api/v4",
+        ] {
+            assert!(normalize_url(input).is_err(), "accepted {input}");
+        }
     }
 
     #[test]

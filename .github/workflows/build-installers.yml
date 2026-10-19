@@ -73,7 +73,7 @@ jobs:
           tauriScript: pnpm tauri
           args: ${{ matrix.args }}
           tagName: ${{ startsWith(github.ref, 'refs/tags/') && github.ref_name || '' }}
-          releaseName: GitLab Manager v__VERSION__
+          releaseName: v__VERSION__
           releaseBody: "早期版本。请按系统和架构下载附件；签名状态和安装要求见仓库 README。"
           releaseDraft: true
           prerelease: false

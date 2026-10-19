@@ -67,7 +67,10 @@ export function ConnectionDialog({
             autoCapitalize="none"
             spellCheck={false}
           />
-          <small>填写网页首页地址，不包含 /api/v4；自建实例的路径前缀会被保留。</small>
+          <small>支持 HTTP / HTTPS。填写网页首页地址，不包含 /api/v4；路径前缀会被保留。</small>
+          {/^http:\/\//i.test(baseUrl.trim()) && (
+            <small>HTTP 不加密传输，请仅在可信网络中使用。</small>
+          )}
         </label>
         <label className="form-field full">
           <span>个人访问令牌</span>

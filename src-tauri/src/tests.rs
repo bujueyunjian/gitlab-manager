@@ -594,24 +594,45 @@ async fn removing_a_non_direct_member_never_revokes_inherited_access() {
 
 #[tokio::test]
 async fn saving_a_connection_keeps_credentials_outside_the_database() {
+    let user = json!({"id":10,"name":"Demo User","username":"demo-user"});
+    let version = json!({"version":"19.0.0"});
+    let token = json!({"scopes":["api"],"expires_at":"2099-12-31"});
     let server = Server::new(vec![
-        reply(
-            200,
-            json!({"id":10,"name":"Demo User","username":"demo-user"}),
-        ),
-        reply(200, json!({"version":"19.0.0"})),
-        reply(200, json!({"scopes":["api"],"expires_at":"2099-12-31"})),
+        reply(200, user.clone()),
+        reply(200, version.clone()),
+        reply(200, token.clone()),
+        reply(200, user),
+        reply(200, token),
+        reply(200, version),
     ]);
     let (_dir, service) = service();
     let connection = service
         .save_connection(ConnectionInput {
             id: None,
             name: "Test GitLab".into(),
-            base_url: server.url.clone(),
+            base_url: format!("{}/gitlab", server.url),
             token: TEST_TOKEN.into(),
         })
         .await
         .unwrap();
+    assert_eq!(connection.base_url, format!("{}/gitlab/", server.url));
+    let checked = service.check_connection(&connection.id).await.unwrap();
+    assert_eq!(checked.base_url, connection.base_url);
+    let requests = server.requests.lock().unwrap();
+    assert_eq!(
+        requests
+            .iter()
+            .map(|request| request.path.as_str())
+            .collect::<Vec<_>>(),
+        [
+            "/gitlab/api/v4/user",
+            "/gitlab/api/v4/version",
+            "/gitlab/api/v4/personal_access_tokens/self",
+            "/gitlab/api/v4/user",
+            "/gitlab/api/v4/personal_access_tokens/self",
+            "/gitlab/api/v4/version",
+        ]
+    );
     assert_eq!(service.credentials.get(&connection.id).unwrap(), TEST_TOKEN);
     assert!(
         !serde_json::to_string(&service.db.connections().unwrap())
