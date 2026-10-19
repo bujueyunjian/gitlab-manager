@@ -27,7 +27,7 @@
 
 ## 构建安装包
 
-工作流使用 [Tauri 官方 Action](https://github.com/tauri-apps/tauri-action) 构建并上传安装包。推送 `v*` 版本标签后会自动构建；全部平台成功后，自动发布 GitHub 预发布 Release。
+工作流使用 [Tauri 官方 Action](https://github.com/tauri-apps/tauri-action) 构建并上传安装包。推送 `v*` 版本标签后会自动构建；全部平台成功后，自动发布 GitHub Release 并标记为最新版本。
 
 开发测试也可以在 **Actions → Build installers → Run workflow** 中选择分支手动构建，在该次运行的 **Artifacts** 下载产物。分支构建不会发布 Release。
 
