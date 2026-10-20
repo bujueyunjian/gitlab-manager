@@ -1,0 +1,37 @@
+README.md
+  s_52d288507547af::t_ac1cd08e818734 21
+src-tauri/src/gitlab.rs
+  s_a8b0ce63375407::t_a7130ab36a55d4 204,206,218,221-240,264,277
+src-tauri/src/models.rs
+  s_52d288507547af::t_bf0a301f2981ec 140,146
+src-tauri/src/tests.rs
+  s_a8b0ce63375407::t_214160a315e951 289-447
+src/pages/Repositories.tsx
+  s_52d288507547af::t_48adc8df77a2b5 16,96-97,101
+src/types.ts
+  s_52d288507547af::t_bb7d846fbaadae 74,78
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.6.22",
+  "base_commit_sha": "cb5eeb50e8b7bcfa0a3ed249724eac94e96371b7",
+  "prompts": {},
+  "sessions": {
+    "s_52d288507547af": {
+      "agent_id": {
+        "tool": "codex",
+        "id": "01a08abe-f37d-7ba0-9438-35908f2d71ed",
+        "model": "gpt-6-astra"
+      },
+      "human_author": "bujueyunjian <bbujueyunjian@gmail.com>"
+    },
+    "s_a8b0ce63375407": {
+      "agent_id": {
+        "tool": "codex",
+        "id": "01a15396-cfee-77d1-8c8c-0dd9550a193f",
+        "model": "gpt-6-astra"
+      },
+      "human_author": "bujueyunjian <bbujueyunjian@gmail.com>"
+    }
+  }
+}
