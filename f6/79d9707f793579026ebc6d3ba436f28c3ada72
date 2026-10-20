@@ -1,0 +1,22 @@
+package.json
+  h_bc861c43e73ff9 3
+src-tauri/Cargo.lock
+  h_bc861c43e73ff9 1487
+src-tauri/Cargo.toml
+  h_bc861c43e73ff9 3
+src-tauri/tauri.conf.json
+  h_bc861c43e73ff9 4
+src/pages/Repositories.tsx
+  h_bc861c43e73ff9 96,107-112
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.6.22",
+  "base_commit_sha": "f679d9707f793579026ebc6d3ba436f28c3ada72",
+  "prompts": {},
+  "humans": {
+    "h_bc861c43e73ff9": {
+      "author": "bujueyunjian <bbujueyunjian@gmail.com>"
+    }
+  }
+}
