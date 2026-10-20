@@ -93,7 +93,7 @@ export function RepositoriesPage() {
             <option value="all">全部状态</option>
           </select>
           <select
-            aria-label="仓库管理权限筛选"
+            aria-label="仓库角色筛选（最低角色）"
             value={filter.minAccessLevel ?? "all"}
             onChange={(e) => {
               setFilter({
@@ -104,8 +104,12 @@ export function RepositoriesPage() {
             }}
           >
             <option value="all">全部角色</option>
-            <option value="40">可管理仓库</option>
-            <option value="30">Developer 及以上</option>
+            {[10, 20, 30, 40, 50].map((level) => (
+              <option value={level} key={level}>
+                {roleName(level)}
+                {level < 50 ? " 及以上" : ""}
+              </option>
+            ))}
           </select>
         </form>
         {selected.size > 0 && <SelectionBar />}
