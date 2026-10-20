@@ -71,10 +71,11 @@ export interface ProjectResources {
   hooks: ReadResult<Hook[]>;
   members: ReadResult<{ direct: Member[]; all: Member[]; shares: Share[] }>;
 }
+/** Repository filters match the current user's effective role exactly; null includes all roles. */
 export interface ProjectFilter {
   search: string;
   archived: boolean | null;
-  minAccessLevel: number | null;
+  accessLevel: number | null;
 }
 export interface Resolution {
   input: string;

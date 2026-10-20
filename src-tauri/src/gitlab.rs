@@ -201,7 +201,9 @@ impl GitLab {
         Ok(records)
     }
 
+    /// Read all matching pages and filter by the same effective role shown in the repository list.
     pub async fn projects(&self, filter: &ProjectFilter) -> Result<Vec<Project>> {
+        // 1. Use GitLab's minimum level to narrow candidates while retaining search and archive filters.
         let mut query = vec![
             ("membership", "true".into()),
             ("order_by", "path".into()),
@@ -213,10 +215,29 @@ impl GitLab {
         if let Some(value) = filter.archived {
             query.push(("archived", value.to_string()));
         }
-        if let Some(value) = filter.min_access_level {
+        if let Some(value) = filter.access_level {
             query.push(("min_access_level", value.to_string()));
         }
-        self.list("projects", &query).await
+
+        // 2. Complete pagination before filtering, so counts and display pages contain every match.
+        let mut projects: Vec<Project> = self.list("projects", &query).await?;
+
+        // 3. Direct and inherited group permissions contribute their highest level; missing levels stay unknown.
+        if let Some(level) = filter.access_level {
+            projects.retain(|project| {
+                project.permissions.as_ref().and_then(|permissions| {
+                    [
+                        permissions.project_access.as_ref(),
+                        permissions.group_access.as_ref(),
+                    ]
+                    .into_iter()
+                    .flatten()
+                    .map(|access| access.access_level)
+                    .max()
+                }) == Some(level)
+            });
+        }
+        Ok(projects)
     }
 
     pub async fn project(&self, id: u64) -> Result<Project> {
@@ -240,6 +261,7 @@ impl GitLab {
             .shared_with_groups)
     }
 
+    /// Resolve a repository reference without applying the repository-list role filter.
     pub async fn resolve(&self, input: &str) -> Result<Vec<Project>> {
         match project_reference(&self.base, input)? {
             ProjectReference::Path(path) => {
@@ -252,7 +274,7 @@ impl GitLab {
                     .projects(&ProjectFilter {
                         search: name.clone(),
                         archived: None,
-                        min_access_level: None,
+                        access_level: None,
                     })
                     .await?;
                 // Exact name/path matching avoids silently authorizing a similarly named application.

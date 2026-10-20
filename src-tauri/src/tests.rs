@@ -286,6 +286,165 @@ fn secrets_never_enter_serializable_plans_and_url_changes_require_authentication
     );
 }
 
+/// Exact role filtering uses the displayed effective role and reads past nonmatching pages.
+#[tokio::test]
+async fn project_role_filter_matches_exact_effective_roles_across_pages() {
+    let maintainer = project();
+    let mut owner = maintainer.clone();
+    owner.id = 2;
+    owner.permissions = Some(Permissions {
+        project_access: None,
+        group_access: Some(Access { access_level: 50 }),
+    });
+    let mut developer = maintainer.clone();
+    developer.id = 3;
+    developer.permissions = Some(Permissions {
+        project_access: Some(Access { access_level: 30 }),
+        group_access: None,
+    });
+    let mut inherited_developer = developer.clone();
+    inherited_developer.id = 4;
+    inherited_developer.permissions = Some(Permissions {
+        project_access: Some(Access { access_level: 20 }),
+        group_access: Some(Access { access_level: 30 }),
+    });
+    let mut inherited_owner = developer.clone();
+    inherited_owner.id = 5;
+    inherited_owner.permissions.as_mut().unwrap().group_access = Some(Access { access_level: 50 });
+    let mut unknown = developer.clone();
+    unknown.id = 6;
+    unknown.permissions = None;
+    let server = Server::new(vec![
+        Reply {
+            status: 200,
+            body: json!([maintainer, owner]),
+            headers: "Link: </api/v4/projects?membership=true&min_access_level=30&search=Portal&archived=false&page=2>; rel=\"next\"\r\n".into(),
+        },
+        reply(200, json!([developer, inherited_developer, inherited_owner, unknown])),
+    ]);
+    let projects = server
+        .client()
+        .projects(&ProjectFilter {
+            search: " Portal ".into(),
+            archived: Some(false),
+            access_level: Some(30),
+        })
+        .await
+        .unwrap();
+    assert_eq!(
+        projects
+            .iter()
+            .map(|project| project.id)
+            .collect::<Vec<_>>(),
+        [3, 4]
+    );
+    let requests = server.requests.lock().unwrap();
+    assert_eq!(requests.len(), 2);
+    let first_url = url::Url::parse(&format!("{}{}", server.url, requests[0].path)).unwrap();
+    let query: HashMap<_, _> = first_url.query_pairs().collect();
+    assert_eq!(query.get("min_access_level").unwrap(), "30");
+    assert_eq!(query.get("search").unwrap(), "Portal");
+    assert_eq!(query.get("archived").unwrap(), "false");
+    assert_eq!(query.get("membership").unwrap(), "true");
+    assert!(requests[1].path.ends_with("page=2"));
+}
+
+/// Every selectable role matches exactly; clearing the role filter retains unknown permissions too.
+#[tokio::test]
+async fn project_role_filter_supports_each_role_and_all_roles() {
+    for selected in [None, Some(10), Some(20), Some(30), Some(40), Some(50)] {
+        let mut candidates: Vec<_> = [10, 20, 30, 40, 50]
+            .into_iter()
+            .filter(|level| selected.is_none_or(|minimum| *level >= minimum))
+            .map(|level| {
+                let mut candidate = project();
+                candidate.id = u64::from(level);
+                candidate.permissions = Some(Permissions {
+                    project_access: Some(Access {
+                        access_level: level,
+                    }),
+                    group_access: None,
+                });
+                candidate
+            })
+            .collect();
+        let mut unknown = project();
+        unknown.id = 99;
+        unknown.permissions = None;
+        candidates.push(unknown);
+        let mut empty_permissions = project();
+        empty_permissions.id = 100;
+        empty_permissions.permissions = Some(Permissions {
+            project_access: None,
+            group_access: None,
+        });
+        candidates.push(empty_permissions);
+        let server = Server::new(vec![reply(200, json!(candidates))]);
+        let filter: ProjectFilter = serde_json::from_value(json!({
+            "search":"", "archived":null, "accessLevel":selected,
+        }))
+        .unwrap();
+        let projects = server.client().projects(&filter).await.unwrap();
+        let expected = selected
+            .map(|level| vec![u64::from(level)])
+            .unwrap_or_else(|| vec![10, 20, 30, 40, 50, 99, 100]);
+        assert_eq!(
+            projects
+                .iter()
+                .map(|project| project.id)
+                .collect::<Vec<_>>(),
+            expected
+        );
+        assert_eq!(
+            server.requests.lock().unwrap()[0]
+                .path
+                .contains("min_access_level="),
+            selected.is_some()
+        );
+    }
+}
+
+/// An unreadable later page must fail the exact-role query instead of exposing a partial result.
+#[tokio::test]
+async fn project_role_filter_propagates_later_page_failures() {
+    for status in [403, 200] {
+        let server = Server::new(vec![
+            Reply {
+                status: 200,
+                body: json!([project()]),
+                headers: "Link: </api/v4/projects?min_access_level=40&page=2>; rel=\"next\"\r\n"
+                    .into(),
+            },
+            reply(
+                status,
+                if status == 403 {
+                    json!({"message":"Forbidden"})
+                } else {
+                    json!([{"id":2}])
+                },
+            ),
+        ]);
+        let error = server
+            .client()
+            .projects(&ProjectFilter {
+                search: String::new(),
+                archived: None,
+                access_level: Some(40),
+            })
+            .await
+            .unwrap_err();
+        if status == 403 {
+            assert!(matches!(
+                error,
+                crate::error::Error::Api { status: 403, .. }
+            ));
+        } else {
+            assert!(matches!(error, crate::error::Error::Json(_)));
+        }
+        assert_eq!(server.requests.lock().unwrap().len(), 2);
+    }
+}
+
 #[tokio::test]
 async fn scan_reads_all_pages_and_does_not_create_after_a_failed_page() {
     for second_status in [200, 403] {

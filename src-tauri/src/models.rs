@@ -137,12 +137,13 @@ pub struct MemberList {
     pub shares: Vec<Share>,
 }
 
+/// Repository search conditions; access_level matches the user's effective role exactly.
 #[derive(Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct ProjectFilter {
     pub search: String,
     pub archived: Option<bool>,
-    pub min_access_level: Option<u32>,
+    pub access_level: Option<u32>,
 }
 
 #[derive(Serialize)]

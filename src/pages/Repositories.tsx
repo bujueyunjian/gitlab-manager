@@ -13,7 +13,7 @@ export function RepositoriesPage() {
   const [filter, setFilter] = useState<ProjectFilter>({
     search: "",
     archived: false,
-    minAccessLevel: null,
+    accessLevel: null,
   });
   const [searchInput, setSearchInput] = useState("");
   const [pageIndex, setPageIndex] = useState(1);
@@ -93,12 +93,12 @@ export function RepositoriesPage() {
             <option value="all">全部状态</option>
           </select>
           <select
-            aria-label="仓库角色筛选（最低角色）"
-            value={filter.minAccessLevel ?? "all"}
+            aria-label="仓库角色筛选（精确匹配）"
+            value={filter.accessLevel ?? "all"}
             onChange={(e) => {
               setFilter({
                 ...filter,
-                minAccessLevel: e.target.value === "all" ? null : Number(e.target.value),
+                accessLevel: e.target.value === "all" ? null : Number(e.target.value),
               });
               setPageIndex(1);
             }}
@@ -107,7 +107,6 @@ export function RepositoriesPage() {
             {[10, 20, 30, 40, 50].map((level) => (
               <option value={level} key={level}>
                 {roleName(level)}
-                {level < 50 ? " 及以上" : ""}
               </option>
             ))}
           </select>
