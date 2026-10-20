@@ -1,0 +1,41 @@
+src-tauri/Cargo.lock
+  s_a8b0ce63375407::t_14cd82187e785f 1494
+src-tauri/Cargo.toml
+  s_a8b0ce63375407::t_f7e761906e56ec 22
+src-tauri/src/gitlab.rs
+  s_a8b0ce63375407::t_e51e4d13aebbca 117-140
+src-tauri/src/models.rs
+  s_a8b0ce63375407::t_c72c5ab1fef8ef 4,13,278,281
+src-tauri/src/planner.rs
+  s_a8b0ce63375407::t_98f546d651724d 52,54-59,62,188-190,204,209-219,231-236,335-337,391,397-402,449
+src-tauri/src/service.rs
+  s_a8b0ce63375407::t_51007d392b81e5 62,64,73-75,106-107,111,130,132,139-141,143-144
+src-tauri/src/tests.rs
+  s_a8b0ce63375407::t_4b4a6ff367e946 178,191,596-898,910,937
+src/App.tsx
+  s_a8b0ce63375407::t_60af0ae4cc42bd 19,55,248-252
+src/BatchDialogs.tsx
+  s_a8b0ce63375407::t_16205437925a07 5,146,165,179,195,201-204,309,339-349,351-355,357-362
+src/Connections.tsx
+  s_a8b0ce63375407::t_92da6a25f2ed01 7,9,88,107,183,187-191
+src/domain.ts
+  s_a8b0ce63375407::t_42b1419abf1071 1-18
+src/pages/Repositories.tsx
+  s_a8b0ce63375407::t_26120653b56c07 5,12,59
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.6.22",
+  "base_commit_sha": "5e9331287fa39b4460aecc022094deb9ab0683ce",
+  "prompts": {},
+  "sessions": {
+    "s_a8b0ce63375407": {
+      "agent_id": {
+        "tool": "codex",
+        "id": "01a15396-cfee-77d1-8c8c-0dd9550a193f",
+        "model": "gpt-6-astra"
+      },
+      "human_author": "bujueyunjian <bbujueyunjian@gmail.com>"
+    }
+  }
+}
