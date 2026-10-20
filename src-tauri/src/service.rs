@@ -59,7 +59,9 @@ impl Service {
         Ok(())
     }
 
+    /// Verify identity and version-supported API access before storing connection credentials.
     pub async fn save_connection(&self, input: ConnectionInput) -> Result<Connection> {
+        // 1. Validate the connection and determine available token metadata.
         self.ensure_idle()?;
         if input.name.trim().is_empty() {
             return Err(invalid("请填写连接名称"));
@@ -68,10 +70,9 @@ impl Service {
         let client = GitLab::new(&url, input.token.clone())?;
         let user: User = client.get("user").await?;
         let version: Version = client.get("version").await?;
-        let token: TokenInfo = client.get("personal_access_tokens/self").await?;
-        if !token.scopes.iter().any(|s| s == "api" || s == "read_api") {
-            return Err(invalid("访问令牌需要 api 或 read_api 范围"));
-        }
+        let token = client.token_info(&version.version).await?;
+
+        // 2. Preserve the connection identity and credential needed for rollback.
         let previous = input
             .id
             .as_deref()
@@ -102,11 +103,12 @@ impl Service {
             base_url: url,
             revision,
             user,
-            scopes: token.scopes,
-            expires_at: token.expires_at,
+            scopes: token.as_ref().map(|token| token.scopes.clone()),
+            expires_at: token.and_then(|token| token.expires_at),
             version: version.version,
             checked_at: now(),
         };
+        // 3. Store the credential and metadata together, restoring the credential on failure.
         self.credentials.set(&id, &input.token)?;
         if let Err(original) = self.db.save_connection(&connection) {
             let rollback = match previous_token {
@@ -125,17 +127,21 @@ impl Service {
         Ok(connection)
     }
 
+    /// Refresh metadata using the detected version without accepting identity or scope changes silently.
     pub async fn check_connection(&self, id: &str) -> Result<Connection> {
+        // 1. Revalidate identity and API access before changing saved metadata.
         let (mut connection, client) = self.client(id)?;
         let user: User = client.get("user").await?;
         if user.id != connection.user.id {
             return Err(invalid("令牌身份发生变化，请重新保存连接"));
         }
-        let token: TokenInfo = client.get("personal_access_tokens/self").await?;
         let version: Version = client.get("version").await?;
+        let token = client.token_info(&version.version).await?;
+
+        // 2. Replace stale metadata, including when a server upgrade makes scopes available.
         connection.user = user;
-        connection.scopes = token.scopes;
-        connection.expires_at = token.expires_at;
+        connection.scopes = token.as_ref().map(|token| token.scopes.clone());
+        connection.expires_at = token.and_then(|token| token.expires_at);
         connection.version = version.version;
         connection.checked_at = now();
         self.db.save_connection(&connection)?;

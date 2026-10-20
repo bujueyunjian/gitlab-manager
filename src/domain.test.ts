@@ -1,5 +1,12 @@
 import { describe, expect, it } from "vitest";
-import { inputLines, resolvedSelection, taskCounts } from "./domain";
+import {
+  canAttemptWrite,
+  inputLines,
+  resolvedSelection,
+  supportsWebhookNames,
+  taskCounts,
+  tokenScopeLabel,
+} from "./domain";
 import type { PlanItem, Project } from "./types";
 
 const project = (id: number): Project => ({
@@ -12,6 +19,27 @@ const project = (id: number): Project => ({
   archived: false,
   visibility: "private",
   permissions: null,
+});
+
+describe("token scope availability", () => {
+  it("allows legacy requests while displaying their authorization as unknown", () => {
+    expect(canAttemptWrite(null)).toBe(true);
+    expect(tokenScopeLabel(null)).toBe("范围未知 · 由 GitLab 校验");
+  });
+  it("keeps verified read-only tokens from enabling write actions", () => {
+    expect(canAttemptWrite(["read_api"])).toBe(false);
+    expect(canAttemptWrite([])).toBe(false);
+    expect(tokenScopeLabel(["read_api"])).toBe("只读 · read_api");
+    expect(canAttemptWrite(["api"])).toBe(true);
+    expect(tokenScopeLabel(["api"])).toBe("可读写 · api");
+  });
+});
+
+it("offers webhook names only from GitLab 17.1, including edition suffixes", () => {
+  expect(supportsWebhookNames("13.10.5")).toBe(false);
+  expect(supportsWebhookNames("17.0.8-ee")).toBe(false);
+  expect(supportsWebhookNames("17.1.0-ee")).toBe(true);
+  expect(supportsWebhookNames("19.0.0")).toBe(true);
 });
 
 describe("batch repository selection", () => {

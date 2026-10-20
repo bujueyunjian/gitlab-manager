@@ -1,6 +1,7 @@
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 
+/// Persisted identity and token metadata; legacy servers cannot report token scopes.
 #[derive(Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct Connection {
@@ -9,7 +10,7 @@ pub struct Connection {
     pub base_url: String,
     pub revision: String,
     pub user: User,
-    pub scopes: Vec<String>,
+    pub scopes: Option<Vec<String>>,
     pub expires_at: Option<String>,
     pub version: String,
     pub checked_at: String,
@@ -274,9 +275,10 @@ pub struct HookRequest {
     pub creation: Option<HookDefaults>,
 }
 
+/// Creation settings omit names on GitLab releases that do not support the field.
 #[derive(Clone, Deserialize)]
 pub struct HookDefaults {
-    pub name: String,
+    pub name: Option<String>,
     pub events: HookEvents,
     pub ssl: bool,
 }

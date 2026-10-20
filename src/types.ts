@@ -5,13 +5,14 @@ export interface User {
   name: string;
   is_admin: boolean | null;
 }
+/** Saved identity and token metadata; legacy GitLab cannot report token scopes. */
 export interface Connection {
   id: string;
   name: string;
   baseUrl: string;
   revision: string;
   user: User;
-  scopes: string[];
+  scopes: string[] | null;
   expiresAt: string | null;
   version: string;
   checkedAt: string;
@@ -132,6 +133,7 @@ export interface MemberRow {
   member: Member;
   inherited: boolean;
 }
+/** Webhook edits omit fields unavailable on the connected GitLab version. */
 export interface HookRequest {
   connectionId: string;
   projectIds: number[];
@@ -144,7 +146,7 @@ export interface HookRequest {
   ssl: boolean | null;
   secret: string | null;
   choices: Record<string, number>;
-  creation: { name: string; events: HookEvents; ssl: boolean } | null;
+  creation: { name: string | null; events: HookEvents; ssl: boolean } | null;
 }
 export interface PermissionRequest {
   connectionId: string;

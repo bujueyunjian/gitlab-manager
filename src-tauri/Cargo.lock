@@ -1491,6 +1491,7 @@ dependencies = [
  "percent-encoding",
  "reqwest",
  "rusqlite",
+ "semver",
  "serde",
  "serde_json",
  "tauri",

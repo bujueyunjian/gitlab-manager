@@ -114,6 +114,30 @@ impl GitLab {
         Ok(serde_json::from_str(&response.text().await?)?)
     }
 
+    /// Validate API access using the server version; unavailable legacy metadata stays unknown.
+    pub async fn token_info(&self, version: &str) -> Result<Option<TokenInfo>> {
+        // 1. Select the documented token endpoint capability from the reported version.
+        let version = semver::Version::parse(version)
+            .map_err(|_| invalid("GitLab 返回的版本号格式无效，无法确认接口支持情况"))?;
+        if (version.major, version.minor) < (15, 5) {
+            // /user and /version also accept read_user, which is insufficient for repository APIs.
+            self.get::<Vec<Project>>("projects?membership=true&per_page=1")
+                .await?;
+            return Ok(None);
+        }
+
+        // 2. Keep all modern endpoint failures visible instead of assuming legacy support.
+        let token: TokenInfo = self.get("personal_access_tokens/self").await?;
+        if !token
+            .scopes
+            .iter()
+            .any(|scope| scope == "api" || scope == "read_api")
+        {
+            return Err(invalid("访问令牌需要 api 或 read_api 范围"));
+        }
+        Ok(Some(token))
+    }
+
     pub async fn write(&self, method: Method, path: &str, body: Option<&Value>) -> Result<Value> {
         let response = self.send(method, self.api_url(path)?, body).await?;
         if response.status().as_u16() == 202 {

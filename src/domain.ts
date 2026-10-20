@@ -1,4 +1,21 @@
-import type { ItemStatus, PlanItem, Project, Resolution } from "./types";
+import type { Connection, ItemStatus, PlanItem, Project, Resolution } from "./types";
+
+/** Unknown legacy scopes permit a request, whose authorization remains with GitLab. */
+export function canAttemptWrite(scopes: Connection["scopes"]): boolean {
+  return scopes === null || scopes.includes("api");
+}
+
+/** Keep unavailable token metadata distinct from verified read-only or write scopes. */
+export function tokenScopeLabel(scopes: Connection["scopes"]): string {
+  if (scopes === null) return "范围未知 · 由 GitLab 校验";
+  return scopes.includes("api") ? "可读写 · api" : "只读 · read_api";
+}
+
+/** Connection versions are validated by the backend; GitLab added webhook names in 17.1. */
+export function supportsWebhookNames(version: string): boolean {
+  const [major, minor] = version.split(".").map(Number);
+  return major > 17 || (major === 17 && minor >= 1);
+}
 
 export const roles: Record<number, string> = {
   10: "Guest",

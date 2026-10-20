@@ -2,14 +2,14 @@ import { useState } from "react";
 import { useQuery } from "@tanstack/react-query";
 import { ChevronRight, FolderGit2, Link2, RefreshCw, Search } from "lucide-react";
 import { api, errorMessage } from "../api";
-import { accessLevel, roleName } from "../domain";
+import { accessLevel, roleName, tokenScopeLabel } from "../domain";
 import type { ProjectFilter } from "../types";
 import { Badge, Button, Empty, ErrorBox, Loading, OrbitDecoration } from "../ui";
 import { SelectionBar, useWorkspace } from "../Workspace";
 
 /** Repository selection persists across pages; search and paging are local view state. */
 export function RepositoriesPage() {
-  const { connection, selected, setSelected, setModal, writable, chooseProject } = useWorkspace();
+  const { connection, selected, setSelected, setModal, chooseProject } = useWorkspace();
   const [filter, setFilter] = useState<ProjectFilter>({
     search: "",
     archived: false,
@@ -56,7 +56,7 @@ export function RepositoriesPage() {
         <span>
           <b>{selected.size}</b> 个已选
         </span>
-        <span className="context-end">{writable ? "可读写资源" : "只读访问"}</span>
+        <span className="context-end">{tokenScopeLabel(connection.scopes)}</span>
       </div>
       <section className="panel">
         <form

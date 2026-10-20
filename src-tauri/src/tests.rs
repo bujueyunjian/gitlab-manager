@@ -175,6 +175,7 @@ fn hook(id: u64) -> Hook {
         "push_events":true,"merge_requests_events":false,"pipeline_events":false,"issues_events":false,
         "tag_push_events":false,"enable_ssl_verification":true,"token_present":false,"signing_token_present":false})).unwrap()
 }
+/// Build a connection with verified write scope for planner and runner fixtures.
 fn connection(url: &str) -> Connection {
     Connection {
         id: "fixture".into(),
@@ -187,7 +188,7 @@ fn connection(url: &str) -> Connection {
             username: "demo-user".into(),
             is_admin: Some(false),
         },
-        scopes: vec!["api".into()],
+        scopes: Some(vec!["api".into()]),
         expires_at: None,
         version: "19.0.0".into(),
         checked_at: now(),
@@ -592,6 +593,309 @@ async fn removing_a_non_direct_member_never_revokes_inherited_access() {
     );
 }
 
+/// A GitLab 13.10 connection must not depend on the newer token self-information route.
+#[tokio::test]
+async fn legacy_connection_does_not_request_token_self_information() {
+    let user = json!({"id":10,"name":"Demo User","username":"demo-user"});
+    let server = Server::new(vec![
+        reply(200, user.clone()),
+        reply(200, json!({"version":"13.10.5"})),
+        reply(200, json!([])),
+        reply(200, user),
+        reply(200, json!({"version":"13.10.5"})),
+        reply(200, json!([])),
+    ]);
+    let (_dir, service) = service();
+    let saved = service
+        .save_connection(ConnectionInput {
+            id: None,
+            name: "Legacy GitLab".into(),
+            base_url: format!("{}/gitlab", server.url),
+            token: TEST_TOKEN.into(),
+        })
+        .await
+        .unwrap();
+    let checked = service.check_connection(&saved.id).await.unwrap();
+    let requests = server.requests.lock().unwrap();
+    assert_eq!(requests.len(), 6);
+    for batch in requests.chunks(3) {
+        assert_eq!(batch[0].path, "/gitlab/api/v4/user");
+        assert_eq!(batch[1].path, "/gitlab/api/v4/version");
+        assert_eq!(
+            batch[2].path,
+            "/gitlab/api/v4/projects?membership=true&per_page=1"
+        );
+        assert!(batch.iter().all(|request| request.method == "GET"));
+    }
+    assert!(saved.scopes.is_none());
+    assert!(checked.scopes.is_none());
+    assert!(checked.expires_at.is_none());
+    let stored = service.db.connection(&saved.id).unwrap();
+    assert!(serde_json::to_value(stored).unwrap()["scopes"].is_null());
+    assert_eq!(service.credentials.get(&saved.id).unwrap(), TEST_TOKEN);
+}
+
+/// The 15.5 boundary determines endpoint selection, including CE/EE version suffixes.
+#[tokio::test]
+async fn token_info_uses_the_reported_version_boundary() {
+    for (version, modern) in [("15.4.9-ee", false), ("15.5.0-ee", true), ("19.0.0", true)] {
+        let body = if modern {
+            json!({"scopes":["read_api"],"expires_at":null})
+        } else {
+            json!([])
+        };
+        let server = Server::new(vec![reply(200, body)]);
+        let token = server.client().token_info(version).await.unwrap();
+        assert_eq!(token.is_some(), modern);
+        if let Some(token) = token {
+            assert_eq!(token.scopes, ["read_api"]);
+        }
+        assert_eq!(
+            server.requests.lock().unwrap()[0].path,
+            if modern {
+                "/api/v4/personal_access_tokens/self"
+            } else {
+                "/api/v4/projects?membership=true&per_page=1"
+            }
+        );
+    }
+}
+
+/// Unauthenticated, forbidden, malformed and unsupported-scope responses never create a connection.
+#[tokio::test]
+async fn failed_connection_validation_does_not_store_metadata() {
+    let user = json!({"id":10,"name":"Demo User","username":"demo-user"});
+    let cases = vec![
+        vec![reply(401, json!({"message":"Unauthorized"}))],
+        vec![
+            reply(200, user.clone()),
+            reply(403, json!({"message":"Forbidden"})),
+        ],
+        vec![
+            reply(200, user.clone()),
+            reply(200, json!({"version":"13.10.5"})),
+            reply(403, json!({"message":"Forbidden"})),
+        ],
+        vec![
+            reply(200, user.clone()),
+            reply(200, json!({"version":"invalid"})),
+        ],
+        vec![
+            reply(200, user.clone()),
+            reply(200, json!({"version":"19.0.0"})),
+            reply(200, json!({"scopes":["read_user"]})),
+        ],
+        vec![
+            reply(200, user.clone()),
+            reply(200, json!({"version":"19.0.0"})),
+            reply(200, json!({"unexpected":true})),
+        ],
+    ];
+    for responses in cases {
+        let expected_requests = responses.len();
+        let server = Server::new(responses);
+        let (_dir, service) = service();
+        let result = service
+            .save_connection(ConnectionInput {
+                id: None,
+                name: "Invalid connection".into(),
+                base_url: server.url.clone(),
+                token: TEST_TOKEN.into(),
+            })
+            .await;
+        assert!(result.is_err());
+        assert!(service.db.connections().unwrap().is_empty());
+        assert_eq!(server.requests.lock().unwrap().len(), expected_requests);
+    }
+}
+
+/// A modern server error must not silently switch to the legacy validation path.
+#[tokio::test]
+async fn modern_token_errors_remain_errors() {
+    for status in [401, 403, 404, 500] {
+        let server = Server::new(vec![reply(
+            status,
+            json!({"message":"Token lookup failed"}),
+        )]);
+        let error = server.client().token_info("15.5.0").await.err().unwrap();
+        assert!(
+            matches!(error, crate::error::Error::Api { status: actual, .. } if actual == status)
+        );
+        assert_eq!(server.requests.lock().unwrap().len(), 1);
+    }
+}
+
+/// Refreshing an upgraded server replaces unknown scopes; failed refreshes preserve saved metadata.
+#[tokio::test]
+async fn checking_an_upgraded_server_refreshes_scopes_without_hiding_later_errors() {
+    let user = json!({"id":10,"name":"Demo User","username":"demo-user"});
+    let server = Server::new(vec![
+        reply(200, user.clone()),
+        reply(200, json!({"version":"13.10.5"})),
+        reply(200, json!([])),
+        reply(200, user.clone()),
+        reply(200, json!({"version":"15.5.0"})),
+        reply(
+            200,
+            json!({"scopes":["read_api"],"expires_at":"2099-12-31"}),
+        ),
+        reply(200, user),
+        reply(200, json!({"version":"15.5.0"})),
+        reply(404, json!({"error":"404 Not Found"})),
+    ]);
+    let (_dir, service) = service();
+    let saved = service
+        .save_connection(ConnectionInput {
+            id: None,
+            name: "Upgraded GitLab".into(),
+            base_url: server.url.clone(),
+            token: TEST_TOKEN.into(),
+        })
+        .await
+        .unwrap();
+    let checked = service.check_connection(&saved.id).await.unwrap();
+    assert_eq!(checked.scopes, Some(vec!["read_api".into()]));
+    assert_eq!(checked.expires_at.as_deref(), Some("2099-12-31"));
+    assert_eq!(checked.revision, saved.revision);
+    assert!(service.check_connection(&saved.id).await.is_err());
+    assert_eq!(
+        serde_json::to_value(service.db.connection(&saved.id).unwrap()).unwrap(),
+        serde_json::to_value(checked).unwrap()
+    );
+}
+
+/// Saved connections from earlier app versions retain their known scopes without migration.
+#[test]
+fn stored_scope_arrays_remain_readable() {
+    let serialized = serde_json::to_value(connection("https://gitlab.example.com")).unwrap();
+    assert_eq!(serialized["scopes"], json!(["api"]));
+    let restored: Connection = serde_json::from_value(serialized).unwrap();
+    assert_eq!(restored.scopes, Some(vec!["api".into()]));
+}
+
+/// Legacy hooks omit unsupported names and only succeed when GitLab confirms the write.
+#[tokio::test]
+async fn legacy_hook_writes_omit_names_and_preserve_permission_failures() {
+    for status in [201, 403] {
+        let mut returned_hook = json!(hook(8));
+        for field in ["name", "token_present", "signing_token_present"] {
+            returned_hook.as_object_mut().unwrap().remove(field);
+        }
+        let server = Server::new(vec![
+            reply(200, json!(project())),
+            reply(200, json!([])),
+            reply(200, json!(project())),
+            reply(200, json!([])),
+            reply(
+                status,
+                if status == 201 {
+                    returned_hook
+                } else {
+                    json!({"message":"403 Forbidden"})
+                },
+            ),
+        ]);
+        let mut legacy = connection(&server.url);
+        legacy.version = "13.10.5".into();
+        legacy.scopes = None;
+        let mut request = request();
+        request.name = None;
+        request.creation.as_mut().unwrap().name = None;
+        let prepared = planner::hooks(&server.client(), &legacy, request)
+            .await
+            .unwrap();
+        assert_eq!(prepared.plan.items[0].action, Action::Create);
+        assert!(prepared.plan.items[0].body.get("name").is_none());
+        let (_dir, service) = service();
+        let mut task = task(prepared.plan.items);
+        runner::execute(
+            &service,
+            &server.client(),
+            &mut task,
+            None,
+            &AtomicBool::new(false),
+            &|| {},
+        )
+        .await
+        .unwrap();
+        assert_eq!(
+            task.items[0].status,
+            if status == 201 {
+                ItemStatus::Succeeded
+            } else {
+                ItemStatus::Failed
+            }
+        );
+        if status == 403 {
+            assert!(task.items[0].message.contains("403"));
+        }
+        let requests = server.requests.lock().unwrap();
+        assert_eq!(requests.len(), 5);
+        assert_eq!(requests[4].method, "POST");
+        assert!(requests[4].body.get("name").is_none());
+    }
+}
+
+/// Unknown legacy scopes do not bypass project restrictions or verified read-only scopes.
+#[tokio::test]
+async fn legacy_plans_keep_scope_and_project_permission_checks() {
+    for (scopes, access_level, archived) in [
+        (None, 30, false),
+        (None, 40, true),
+        (Some(vec!["read_api".into()]), 40, false),
+    ] {
+        let mut project = project();
+        project.archived = archived;
+        project
+            .permissions
+            .as_mut()
+            .unwrap()
+            .project_access
+            .as_mut()
+            .unwrap()
+            .access_level = access_level;
+        let server = Server::new(vec![reply(200, json!(project))]);
+        let mut legacy = connection(&server.url);
+        legacy.version = "13.10.5".into();
+        legacy.scopes = scopes;
+        let mut request = request();
+        request.name = None;
+        request.creation.as_mut().unwrap().name = None;
+        let prepared = planner::hooks(&server.client(), &legacy, request)
+            .await
+            .unwrap();
+        assert_eq!(prepared.plan.items[0].status, ItemStatus::Blocked);
+        assert_eq!(server.requests.lock().unwrap().len(), 1);
+    }
+}
+
+/// A caller cannot send webhook names before 17.1, even if it bypasses the UI controls.
+#[tokio::test]
+async fn webhook_name_support_is_checked_at_the_backend_boundary() {
+    for (version, supported) in [
+        ("13.10.5", false),
+        ("17.0.8-ee", false),
+        ("17.1.0-ee", true),
+    ] {
+        let responses = if supported {
+            vec![reply(200, json!(project())), reply(200, json!([]))]
+        } else {
+            vec![]
+        };
+        let server = Server::new(responses);
+        let mut connection = connection(&server.url);
+        connection.version = version.into();
+        let result = planner::hooks(&server.client(), &connection, request()).await;
+        assert_eq!(result.is_ok(), supported);
+        if let Ok(prepared) = result {
+            assert_eq!(prepared.plan.items[0].body["name"], "Delivery");
+        } else {
+            assert!(server.requests.lock().unwrap().is_empty());
+        }
+    }
+}
+
+/// Modern save and refresh retain token scopes while credentials stay outside serialized metadata.
 #[tokio::test]
 async fn saving_a_connection_keeps_credentials_outside_the_database() {
     let user = json!({"id":10,"name":"Demo User","username":"demo-user"});
@@ -602,8 +906,8 @@ async fn saving_a_connection_keeps_credentials_outside_the_database() {
         reply(200, version.clone()),
         reply(200, token.clone()),
         reply(200, user),
-        reply(200, token),
         reply(200, version),
+        reply(200, token),
     ]);
     let (_dir, service) = service();
     let connection = service
@@ -629,8 +933,8 @@ async fn saving_a_connection_keeps_credentials_outside_the_database() {
             "/gitlab/api/v4/version",
             "/gitlab/api/v4/personal_access_tokens/self",
             "/gitlab/api/v4/user",
-            "/gitlab/api/v4/personal_access_tokens/self",
             "/gitlab/api/v4/version",
+            "/gitlab/api/v4/personal_access_tokens/self",
         ]
     );
     assert_eq!(service.credentials.get(&connection.id).unwrap(), TEST_TOKEN);

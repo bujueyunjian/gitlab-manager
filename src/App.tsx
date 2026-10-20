@@ -16,7 +16,7 @@ import {
   X,
 } from "lucide-react";
 import { api, desktop, errorMessage } from "./api";
-import { accessLevel, roleName } from "./domain";
+import { accessLevel, canAttemptWrite, roleName } from "./domain";
 import type { Page, Project, Task } from "./types";
 import { Button, Dialog, ErrorBox, Loading } from "./ui";
 import { ConnectionDialog, Connections } from "./Connections";
@@ -52,7 +52,7 @@ export default function App() {
   });
   const tasks = useQuery({ queryKey: ["tasks"], queryFn: api.tasks, enabled: desktop });
   const connection = connections.data?.find((c) => c.id === connectionId) ?? null;
-  const writable = connection?.scopes.includes("api") ?? false;
+  const writable = connection !== null && canAttemptWrite(connection.scopes);
   const selectedProjects = useMemo(() => [...selected.values()], [selected]);
   const selectedIds = useMemo(() => [...selected.keys()].sort((a, b) => a - b), [selected]);
   function notify(message: string, error = false) {
@@ -245,6 +245,11 @@ export default function App() {
               </div>
             )}
             {connections.error && <ErrorBox message={errorMessage(connections.error)} />}
+            {connection?.scopes === null && page !== "connections" && page !== "tasks" && (
+              <div className="hint">
+                当前 GitLab 版本无法读取令牌范围。批量修改需要 api 范围，实际权限由 GitLab 校验。
+              </div>
+            )}
             {desktop && connections.isPending ? (
               <Loading>正在读取本地连接…</Loading>
             ) : page === "tasks" ? (

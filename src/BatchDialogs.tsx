@@ -2,7 +2,7 @@ import { useState } from "react";
 import { useMutation } from "@tanstack/react-query";
 import { ArrowRight, Search } from "lucide-react";
 import { api, errorMessage } from "./api";
-import { actionLabels, eventLabels, roles } from "./domain";
+import { actionLabels, eventLabels, roles, supportsWebhookNames } from "./domain";
 import type {
   Connection,
   Group,
@@ -143,6 +143,7 @@ function Targets({ projects }: { projects: Project[] }) {
   );
 }
 
+/** Preview supported webhook fields before explicitly executing a batch change. */
 export function HookDialog({
   connection,
   projects,
@@ -161,6 +162,7 @@ export function HookDialog({
   notify: (message: string, error?: boolean) => void;
 }) {
   const first = rows[0]?.hook;
+  const namesSupported = supportsWebhookNames(connection.version);
   const [mode, setMode] = useState(initialMode);
   const [matchUrl, setMatchUrl] = useState(first?.url ?? "");
   const [name, setName] = useState(first?.name ?? "");
@@ -174,7 +176,7 @@ export function HookDialog({
   });
   const [ssl, setSsl] = useState(first?.enable_ssl_verification ?? true);
   const [fields, setFields] = useState({
-    name: initialMode !== "update",
+    name: namesSupported && initialMode !== "update",
     url: false,
     events: initialMode !== "update",
     ssl: initialMode !== "update",
@@ -190,13 +192,16 @@ export function HookDialog({
     targets: rows.map((row) => ({ projectId: row.project.id, hookId: row.hook.id })),
     mode,
     matchUrl,
-    name: fields.name ? name : null,
+    name: namesSupported && fields.name ? name : null,
     url: fields.url ? url : null,
     events: fields.events ? events : null,
     ssl: fields.ssl ? ssl : null,
     secret: fields.secret ? secret : null,
     choices: overrides,
-    creation: mode === "ensure" || mode === "create" ? { name, events, ssl } : null,
+    creation:
+      mode === "ensure" || mode === "create"
+        ? { name: namesSupported ? name : null, events, ssl }
+        : null,
   });
   const scan = useMutation({
     mutationFn: (override: Record<string, number>) => api.previewHooks(request(override)),
@@ -301,7 +306,7 @@ export function HookDialog({
                         onChange={() => {
                           setMode(value as HookRequest["mode"]);
                           if (value === "create")
-                            setFields({ ...fields, name: true, events: true, ssl: true });
+                            setFields({ ...fields, name: namesSupported, events: true, ssl: true });
                           setChoices({});
                         }}
                       />
@@ -331,24 +336,30 @@ export function HookDialog({
               <div className="form-section">
                 <h3>要设置的内容</h3>
                 <p className="scope-caption">已有项只更新选中的字段。新增项使用完整配置。</p>
-                <div className="edit-field">
-                  <label className="check-label">
+                {namesSupported ? (
+                  <div className="edit-field">
+                    <label className="check-label">
+                      <input
+                        type="checkbox"
+                        checked={fields.name}
+                        disabled={mode === "create"}
+                        onChange={(e) => setFields({ ...fields, name: e.target.checked })}
+                      />
+                      名称
+                    </label>
                     <input
-                      type="checkbox"
-                      checked={fields.name}
-                      disabled={mode === "create"}
-                      onChange={(e) => setFields({ ...fields, name: e.target.checked })}
+                      aria-label="Webhook 名称"
+                      value={name}
+                      disabled={mode === "update" && !fields.name}
+                      onChange={(e) => setName(e.target.value)}
+                      placeholder="例如：研发通知"
                     />
-                    名称
-                  </label>
-                  <input
-                    aria-label="Webhook 名称"
-                    value={name}
-                    disabled={mode === "update" && !fields.name}
-                    onChange={(e) => setName(e.target.value)}
-                    placeholder="例如：研发通知"
-                  />
-                </div>
+                  </div>
+                ) : (
+                  <p className="scope-caption">
+                    当前 GitLab 版本不支持 Webhook 名称，将按地址管理。
+                  </p>
+                )}
                 <div className="edit-field">
                   <label className="check-label">
                     <input

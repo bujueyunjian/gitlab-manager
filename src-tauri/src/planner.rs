@@ -49,10 +49,17 @@ fn failed_project(id: u64, resource: Resource, message: String) -> PlanItem {
     }
 }
 
+/// Reject known scope or project restrictions; GitLab authorizes writes when legacy scopes are unknown.
 fn project_write_error(connection: &Connection, project: &Project) -> Option<String> {
-    if !connection.scopes.iter().any(|s| s == "api") {
+    // 1. Enforce known token restrictions without claiming unknown scopes permit writes.
+    if connection
+        .scopes
+        .as_ref()
+        .is_some_and(|scopes| !scopes.iter().any(|s| s == "api"))
+    {
         return Some("访问令牌只有读取权限，写入需要 api 范围".into());
     }
+    // 2. Keep archive and project management permission checks for every server version.
     if project.archived {
         return Some("仓库已归档，不能修改配置".into());
     }
@@ -178,7 +185,9 @@ fn validate_webhook_url(value: &str) -> Result<()> {
     Ok(())
 }
 
-fn validate_hook_request(request: &HookRequest) -> Result<()> {
+/// Validate requested changes against the server's supported webhook fields.
+fn validate_hook_request(request: &HookRequest, names_supported: bool) -> Result<()> {
+    // 1. Validate the operation and explicitly selected targets.
     if !matches!(
         request.mode.as_str(),
         "ensure" | "create" | "update" | "delete"
@@ -192,9 +201,21 @@ fn validate_hook_request(request: &HookRequest) -> Result<()> {
         return Err(invalid("删除必须明确选中具体 Webhook"));
     }
     if request.mode != "delete" {
+        // 2. Validate changes before performing any project requests.
         validate_webhook_url(&request.match_url)?;
         if let Some(url) = &request.url {
             validate_webhook_url(url)?;
+        }
+        if !names_supported
+            && (request.name.is_some()
+                || request
+                    .creation
+                    .as_ref()
+                    .is_some_and(|creation| creation.name.is_some()))
+        {
+            return Err(invalid(
+                "当前 GitLab 版本不支持 Webhook 名称，请仅设置地址、事件和认证",
+            ));
         }
         if request.name.as_ref().is_some_and(|s| s.trim().is_empty()) {
             return Err(invalid("已选择修改名称，请填写名称"));
@@ -207,7 +228,12 @@ fn validate_hook_request(request: &HookRequest) -> Result<()> {
                 .creation
                 .as_ref()
                 .ok_or_else(|| invalid("缺少新增配置"))?;
-            if creation.name.trim().is_empty() {
+            if names_supported
+                && creation
+                    .name
+                    .as_ref()
+                    .is_none_or(|name| name.trim().is_empty())
+            {
                 return Err(invalid("新增配置需要明确的名称"));
             }
         }
@@ -306,7 +332,9 @@ pub fn classify_hook(
             .creation
             .as_ref()
             .ok_or_else(|| invalid("缺少新增配置"))?;
-        body.insert("name".into(), json!(creation.name.trim()));
+        if let Some(name) = &creation.name {
+            body.insert("name".into(), json!(name.trim()));
+        }
         body.extend(
             serde_json::to_value(&creation.events)?
                 .as_object()
@@ -360,12 +388,18 @@ pub fn classify_hook(
     Ok(item)
 }
 
+/// Validate version-supported fields and project permissions before preparing webhook changes.
 pub async fn hooks(
     client: &GitLab,
     connection: &Connection,
     request: HookRequest,
 ) -> Result<PreparedPlan> {
-    validate_hook_request(&request)?;
+    // 1. Reject unsupported fields before scanning projects.
+    let version = semver::Version::parse(&connection.version)
+        .map_err(|_| invalid("GitLab 版本号格式无效，请重新检查连接"))?;
+    validate_hook_request(&request, (version.major, version.minor) >= (17, 1))?;
+
+    // 2. Read complete project configuration and classify the requested changes.
     let mut ids = request.project_ids.clone();
     ids.extend(request.targets.iter().map(|t| t.project_id));
     let mut seen = HashSet::new();
@@ -412,6 +446,7 @@ pub async fn hooks(
             }
         }
     }
+    // 3. Return a reviewable plan without writing to GitLab.
     let title = match request.mode.as_str() {
         "ensure" => "Webhook · 补齐并更新",
         "create" => "Webhook · 批量新增",

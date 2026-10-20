@@ -4,8 +4,9 @@ import { KeyRound, Plus, Server, ShieldCheck, Trash2 } from "lucide-react";
 import { api, desktop, errorMessage } from "./api";
 import type { Connection } from "./types";
 import { Badge, Button, Dialog, ErrorBox } from "./ui";
-import { dateTime } from "./domain";
+import { dateTime, tokenScopeLabel } from "./domain";
 
+/** Validate a connection against the server's detected version before storing its credential. */
 export function ConnectionDialog({
   connection,
   onClose,
@@ -84,6 +85,7 @@ export function ConnectionDialog({
             autoComplete="off"
           />
           <small>批量修改需要 api 范围；仅查看可以使用 read_api。令牌不会回显。</small>
+          <small>自动识别 GitLab 版本；旧版无法读取的令牌范围和到期时间会显示为未知。</small>
         </label>
       </div>
       <details className="help-details">
@@ -102,6 +104,7 @@ export function ConnectionDialog({
   );
 }
 
+/** Show verified connection identity without presenting unavailable token metadata as known. */
 export function Connections({
   connections,
   currentId,
@@ -177,11 +180,15 @@ export function Connections({
               </div>
               <div>
                 <dt>授权范围</dt>
-                <dd>{connection.scopes.includes("api") ? "可读写 · api" : "只读 · read_api"}</dd>
+                <dd>{tokenScopeLabel(connection.scopes)}</dd>
               </div>
               <div>
                 <dt>令牌到期时间</dt>
-                <dd>{connection.expiresAt ?? "GitLab 未提供"}</dd>
+                <dd>
+                  {connection.scopes === null
+                    ? "未知 · 旧版不支持读取"
+                    : (connection.expiresAt ?? "GitLab 未提供")}
+                </dd>
               </div>
               <div className="full">
                 <dt>最近验证</dt>
