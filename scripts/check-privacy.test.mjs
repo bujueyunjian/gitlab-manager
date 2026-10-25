@@ -6,19 +6,20 @@ import { homedir, tmpdir } from "node:os";
 import { dirname, join, relative, resolve, sep } from "node:path";
 import { fileURLToPath } from "node:url";
 import { privacyIssues, scanRepository } from "./check-privacy.mjs";
+import { windowsShortPaths } from "./build-paths.mjs";
 
 const script = fileURLToPath(new URL("./check-privacy.mjs", import.meta.url));
-const sourceRoot = resolve(dirname(script), "..");
-const tempRoot = realpathSync(tmpdir());
+const sourceRoot = realpathSync.native(resolve(dirname(script), ".."));
+const tempRoot = realpathSync.native(tmpdir());
 const fixtures = [];
 
 /** Allow fixture Git operations and recursive cleanup only in a new direct child of the OS temp folder. */
 function verifyFixture(root) {
-  const absolute = realpathSync(root);
+  const absolute = realpathSync.native(root);
   assert.equal(dirname(absolute), tempRoot);
   assert.ok(relative(tempRoot, absolute).startsWith("gitlab-manager-privacy-"));
-  assert.notEqual(absolute, realpathSync(sourceRoot));
-  assert.notEqual(absolute, realpathSync(homedir()));
+  assert.notEqual(absolute, sourceRoot);
+  assert.notEqual(absolute, realpathSync.native(homedir()));
   assert.ok(!absolute.startsWith(sourceRoot + sep));
   assert.ok(!sourceRoot.startsWith(absolute + sep));
 }
@@ -48,7 +49,10 @@ function repository() {
   verifyFixture(root);
   writeFileSync(join(root, "empty-git-config"), "");
   git(root, "init", "-q");
-  assert.equal(realpathSync(git(root, "rev-parse", "--show-toplevel").trim()), realpathSync(root));
+  assert.equal(
+    realpathSync.native(git(root, "rev-parse", "--show-toplevel").trim()),
+    realpathSync.native(root),
+  );
   return root;
 }
 
@@ -73,6 +77,23 @@ after(() => {
   for (const root of fixtures) {
     verifyFixture(root);
     rmSync(root, { recursive: true });
+  }
+});
+
+test("filesystem aliases identify the same fixture while unsafe directories remain forbidden", (context) => {
+  const root = repository();
+  const alias = process.platform === "win32" ? windowsShortPaths([root])[0] : root;
+  verifyFixture(alias);
+  assert.equal(realpathSync.native(alias), realpathSync.native(root));
+  assert.equal(
+    realpathSync.native(git(alias, "rev-parse", "--show-toplevel").trim()),
+    realpathSync.native(root),
+  );
+  assert.throws(() => verifyFixture(sourceRoot));
+  assert.throws(() => verifyFixture(homedir()));
+  assert.throws(() => verifyFixture(tempRoot));
+  if (process.platform === "win32") {
+    context.diagnostic(`Distinct Windows short alias available: ${alias !== root}`);
   }
 });
 
