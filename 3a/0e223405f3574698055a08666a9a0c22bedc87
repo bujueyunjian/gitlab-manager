@@ -1,0 +1,119 @@
+.github/workflows/build-installers.yml
+  s_a8b0ce63375407::t_e19155b7fa8811 60-61
+.github/workflows/check.yml
+  s_a8b0ce63375407::t_26695cd9507f85 17,21-22
+README.md
+  s_a8b0ce63375407::t_a6542a8febb56f 13-14,16,18,22-25,27,31,75-78,101-110,114-115,117,119
+SECURITY.md
+  s_a8b0ce63375407::t_a6b25b550c5d6e 7,9-17
+docs/user-manual.html
+  s_a8b0ce63375407::t_f6294ac08b9e9c 1-1145
+package.json
+  s_a8b0ce63375407::t_73b83268913ac9 21-22,24-25
+scripts/build-paths.mjs
+  s_a8b0ce63375407::t_72644c96a1c155 1-366
+scripts/build-paths.test.mjs
+  s_a8b0ce63375407::t_971fd420bd0fcf 1-268
+scripts/check-privacy.mjs
+  s_02e5d8a61118d0::t_08136f239a3dfc 2-4,21-23,30,33-46,51,53-131,133-163
+scripts/check-privacy.test.mjs
+  s_a8b0ce63375407::t_7b40e23a054301 1-195
+scripts/generate-third-party-notices.mjs
+  s_a8b0ce63375407::t_e352fa7ecc4e25 1-657
+scripts/generate-third-party-notices.test.mjs
+  s_a8b0ce63375407::t_a8530a555aa87a 1-146
+scripts/license-sources.json
+  s_a8b0ce63375407::t_22feff848d56b1 1-302
+scripts/tauri.mjs
+  s_a8b0ce63375407::t_708cb076aa8426 1-180
+src-tauri/Cargo.lock
+  s_a8b0ce63375407::t_4a5a773e7f8e7b 1490,1507,5046-5061
+src-tauri/src/error.rs
+  s_02e5d8a61118d0::t_433677c6ce8bf7 18-21
+src-tauri/src/gitlab.rs
+  s_a8b0ce63375407::t_0d9c3f3b76a8d8 3,18-25,54-69,71,100,107,115-116,126,128-141,284-341
+src-tauri/src/hook_query_tests.rs
+  s_a8b0ce63375407::t_309554913c3294 1-407
+src-tauri/src/models.rs
+  s_a8b0ce63375407::t_03ae5fa1f85c22 87-119,150,152-183,189
+src-tauri/src/planner.rs
+  s_a8b0ce63375407::t_2d0d115b834583 8,229,236,249-260,262-267,277-279,281,306-331,353,426
+src-tauri/src/read_tests.rs
+  s_a8b0ce63375407::t_63282d74725bec 1-432
+src-tauri/src/retry_scope_tests.rs
+  s_a8b0ce63375407::t_9c7f07259c981c 1-256
+src-tauri/src/runner.rs
+  s_02e5d8a61118d0::t_db9b8e04a3e6e7 1-4,62,64,68-96,99-106,178,183,188,193-195,271,340
+src-tauri/src/service.rs
+  s_a8b0ce63375407::t_ae63ff5f3d5cb9 9,190-197,199-231,233-235,238,243-244,246,249-319,323-329,331-338,366,409,412,420-431,438-439,443,458-463,469-470,476,509,513,543
+src-tauri/src/user_manual.rs
+  s_a8b0ce63375407::t_73d51c58b56660 1-88
+src-tauri/tauri.conf.json
+  s_a8b0ce63375407::t_903de41c193c13 34-36
+src/ReadProgress.tsx
+  s_a8b0ce63375407::t_ed8595170f1bee 1-35
+src/RepositoryMembersDialog.tsx
+  s_a8b0ce63375407::t_74dea5fd9ea96d 1-242
+src/ResolveDialog.tsx
+  s_a8b0ce63375407::t_a6440db6cc395c 8-9,11,23,25-28,82,92
+src/UserLookup.tsx
+  s_a8b0ce63375407::t_4503f953802390 1-96
+src/Workspace.tsx
+  s_a8b0ce63375407::t_b07d854a1b8e61 7-8,18-19,26-41,65-66,68-76,79,82-97,101,109,111-120,124,126-143,147-160,163,195,199,203,205-206,210-213,216-218
+src/pages/Hooks.tsx
+  s_a8b0ce63375407::t_273a57abb7be0e 6,8-9,11,14,19-20,31-32,42-43,46,93,107,123-126,130-136,145,176,192,232-241
+src/pages/Permissions.tsx
+  s_a8b0ce63375407::t_ec081cacd2493b 1,4-16,18-26,28-49,51-52,54-90,97,101-102,105-110,113,124,128,133-139,143-150,152-173,178-179,181-233,235-283,285-351,355-364
+src/pages/Repositories.tsx
+  s_02e5d8a61118d0::t_5e67fbaa15d427 1,5-26,29-106,108,116-117,119-145,147-167,169-189,194-202,208,215-223,230,242-264,267-268,278-279,286,289,298-391,393-396,399-539,570,573,609-613,628-636,689-696,702
+src/permissionOverview.test.ts
+  s_a8b0ce63375407::t_3b1b6a9eae8a25 1-166
+src/permissionOverview.ts
+  s_a8b0ce63375407::t_9584a6b38e979a 1-95
+src/readProgress.test.ts
+  s_a8b0ce63375407::t_32a61055345fa9 1-66
+src/repositorySearch.test.ts
+  s_a8b0ce63375407::t_65b4f476508c34 1-69
+src/repositorySearch.ts
+  s_a8b0ce63375407::t_db58b1c4da4170 1-20
+src/resourceReads.test.ts
+  s_a8b0ce63375407::t_c504ebbf1b059f 1-84
+src/resourceReads.ts
+  s_a8b0ce63375407::t_12288bc482ec37 1-44
+src/types.ts
+  s_a8b0ce63375407::t_a3f48a0bed640a 68-74,76-98
+src/ui.tsx
+  s_a8b0ce63375407::t_6514fde10253d4 21,31,41,67-69
+src/useReadProgress.ts
+  s_a8b0ce63375407::t_8ae621b0951666 1-47
+src/useWebhookChecks.ts
+  s_a8b0ce63375407::t_deee01912f7430 1-100
+src/webhookChecks.test.ts
+  s_a8b0ce63375407::t_ac4c133fed3b03 1-137
+src/webhookChecks.ts
+  s_02e5d8a61118d0::t_147210cd133c1d 1-58
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.6.22",
+  "base_commit_sha": "3a0e223405f3574698055a08666a9a0c22bedc87",
+  "prompts": {},
+  "sessions": {
+    "s_02e5d8a61118d0": {
+      "agent_id": {
+        "tool": "codex",
+        "id": "01a132f3-d16d-76e2-838a-954697d8e676",
+        "model": "gpt-6.1-sol"
+      },
+      "human_author": "bujueyunjian <bbujueyunjian@gmail.com>"
+    },
+    "s_a8b0ce63375407": {
+      "agent_id": {
+        "tool": "codex",
+        "id": "01a15396-cfee-77d1-8c8c-0dd9550a193f",
+        "model": "gpt-6.1-sol"
+      },
+      "human_author": "bujueyunjian <bbujueyunjian@gmail.com>"
+    }
+  }
+}
