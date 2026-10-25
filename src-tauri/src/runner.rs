@@ -1,4 +1,7 @@
-use std::sync::atomic::{AtomicBool, Ordering};
+use std::{
+    collections::HashSet,
+    sync::atomic::{AtomicBool, Ordering},
+};
 
 use reqwest::Method;
 use serde_json::{Value, json};
@@ -56,17 +59,51 @@ async fn current(client: &GitLab, item: &PlanItem) -> Result<Option<Value>> {
     }
 }
 
+/// Reread remote state before writing; a rename uses one fresh Hook list for identity and collision checks.
 pub async fn preflight(client: &GitLab, item: &PlanItem) -> Result<()> {
+    // 1. Recheck the repository before examining the target resource.
     if client.project(item.project_id).await?.archived {
         return Err(invalid("仓库已归档，请重新扫描"));
     }
+
+    // 2. A renamed Hook needs the complete list, which also supplies its current snapshot.
+    if item.resource == Resource::Hook
+        && item.action == Action::Update
+        && let Some(name) = item.body.get("name").and_then(Value::as_str)
+        && item
+            .before
+            .as_ref()
+            .and_then(|before| before.get("name"))
+            .and_then(Value::as_str)
+            != Some(name)
+    {
+        let hooks = client.hooks(item.project_id).await?;
+        let target = hooks.iter().find(|hook| Some(hook.id) == item.target_id);
+        if target.map(hook_snapshot) != item.before {
+            return Err(invalid("目标已与预览不一致，请重新扫描；未覆盖他人的修改"));
+        }
+        if hooks
+            .iter()
+            .any(|hook| Some(hook.id) != item.target_id && hook.name.as_deref() == Some(name))
+        {
+            return Err(invalid(
+                "执行前发现其他同名 Webhook，请重新核对名称；未修改配置",
+            ));
+        }
+        return Ok(());
+    }
+
+    // 3. Creation checks absence; other writes compare the fresh resource to the approved snapshot.
     if item.action == Action::Create {
         let exists = if item.resource == Resource::Hook {
-            client
-                .hooks(item.project_id)
-                .await?
-                .iter()
-                .any(|h| Some(h.url.as_str()) == item.body.get("url").and_then(Value::as_str))
+            client.hooks(item.project_id).await?.iter().any(|hook| {
+                Some(hook.url.as_str()) == item.body.get("url").and_then(Value::as_str)
+                    || item
+                        .body
+                        .get("name")
+                        .and_then(Value::as_str)
+                        .is_some_and(|name| hook.name.as_deref() == Some(name))
+            })
         } else {
             current(client, item).await?.is_some()
         };
@@ -138,19 +175,24 @@ async fn write(client: &GitLab, item: &PlanItem, secret: Option<&str>) -> Result
     client.write(method, &path, body).await
 }
 
+/// Persist the entire task while dispatching pending items only within this run's approved scope.
 pub async fn execute(
     service: &Service,
     client: &GitLab,
     task: &mut Task,
+    item_ids: Option<&HashSet<String>>,
     secret: Option<&str>,
     stop: &AtomicBool,
     progress: &(dyn Fn() + Send + Sync),
 ) -> Result<()> {
+    // 1. Dispatch only approved pending items; other entries retain their outcome and attempt count.
     for index in 0..task.items.len() {
         if stop.load(Ordering::Acquire) {
             break;
         }
-        if task.items[index].status != ItemStatus::Pending {
+        if task.items[index].status != ItemStatus::Pending
+            || item_ids.is_some_and(|ids| !ids.contains(&task.items[index].id))
+        {
             continue;
         }
         task.items[index].status = ItemStatus::Running;
@@ -226,6 +268,7 @@ pub async fn execute(
         service.db.save_task(task)?;
         progress();
     }
+    // 2. Derive the task state from every entry and persist the complete result.
     summarize(task);
     service.db.save_task(task)?;
     Ok(())
@@ -294,7 +337,7 @@ pub async fn reconcile(client: &GitLab, task: &mut Task) -> Result<()> {
     Ok(())
 }
 
-/// Exports contain outcomes, not request payloads, stored snapshots or secret-bearing URLs.
+/// Export outcomes and user-supplied descriptions, excluding request bodies and stored snapshots.
 pub fn report(task: &Task) -> Value {
     json!({"title":task.title,"connection":task.connection_name,"createdAt":task.created_at,"status":task.status,
         "items":task.items.iter().map(|i|json!({"project":i.project_path,"subject":i.subject,"resource":i.resource,

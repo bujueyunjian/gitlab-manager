@@ -9,6 +9,7 @@ mod service;
 mod storage;
 #[cfg(test)]
 mod tests;
+mod user_manual;
 
 use std::sync::Arc;
 use tauri::{Emitter, Manager, State};
@@ -56,22 +57,52 @@ async fn list_projects(
     client.projects(&filter).await
 }
 
+/// Resolve references while streaming completed input counts to this invocation's channel.
 #[tauri::command]
 async fn resolve_projects(
     state: State<'_, Arc<Service>>,
     connection_id: String,
     inputs: Vec<String>,
+    on_progress: tauri::ipc::Channel<ReadProgress>,
 ) -> Result<Vec<Resolution>> {
-    state.resolve_projects(&connection_id, inputs).await
+    state
+        .resolve_projects(&connection_id, inputs, |progress| {
+            on_progress.send(progress).map_err(Error::Progress)
+        })
+        .await
 }
 
+/// Return each project's resource outcome; connection and progress-channel failures remain global errors.
 #[tauri::command]
 async fn read_resources(
     state: State<'_, Arc<Service>>,
     connection_id: String,
     project_ids: Vec<u64>,
+    kind: ResourceKind,
+    on_progress: tauri::ipc::Channel<ReadProgress>,
 ) -> Result<Vec<ProjectResources>> {
-    state.resources(&connection_id, project_ids).await
+    state
+        .resources(&connection_id, project_ids, kind, |progress| {
+            on_progress.send(progress).map_err(Error::Progress)
+        })
+        .await
+}
+
+/// Inspect webhook presence without reading member lists or modifying remote configuration.
+#[tauri::command]
+async fn check_webhooks(
+    state: State<'_, Arc<Service>>,
+    connection_id: String,
+    project_ids: Vec<u64>,
+    query: WebhookQuery,
+) -> Result<Vec<ProjectWebhookCheck>> {
+    let (connection, client) = state.client(&connection_id)?;
+    if query.field == WebhookMatchField::Name
+        && !gitlab::supports_webhook_names(&connection.version)?
+    {
+        return Err(invalid("当前 GitLab 版本不提供 Webhook 名称，请按地址查询"));
+    }
+    client.check_webhooks(project_ids, &query).await
 }
 
 #[tauri::command]
@@ -260,6 +291,7 @@ pub fn run() {
             list_projects,
             resolve_projects,
             read_resources,
+            check_webhooks,
             search_users,
             search_groups,
             preview_hooks,
@@ -273,7 +305,8 @@ pub fn run() {
             reconcile_task,
             confirm_unknown,
             export_task,
-            open_project
+            open_project,
+            user_manual::open_user_manual
         ])
         .run(tauri::generate_context!())
         .expect("Failed to start GitLab Manager");

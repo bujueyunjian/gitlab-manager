@@ -1,5 +1,6 @@
 use std::{collections::HashSet, time::Duration};
 
+use futures_util::{StreamExt, stream};
 use reqwest::{
     Client, Method,
     header::{HeaderMap, HeaderValue},
@@ -14,11 +15,18 @@ use crate::{
     models::*,
 };
 
+/// Share the webhook-name capability boundary between inspection and write planning.
+pub fn supports_webhook_names(version: &str) -> Result<bool> {
+    let version = semver::Version::parse(version)
+        .map_err(|_| invalid("GitLab 版本号格式无效，请重新检查连接"))?;
+    Ok((version.major, version.minor) >= (17, 1))
+}
+
+/// Instance-scoped HTTP client; credentials remain in sensitive request headers.
 #[derive(Clone)]
 pub struct GitLab {
     client: Client,
     base: Url,
-    token: String,
 }
 
 pub fn normalize_url(input: &str) -> Result<Url> {
@@ -43,7 +51,24 @@ pub fn normalize_url(input: &str) -> Result<Url> {
     Ok(url)
 }
 
+/// Validate receiver addresses for both exact presence checks and webhook changes.
+pub fn validate_webhook_url(value: &str) -> Result<()> {
+    let url = Url::parse(value).map_err(|_| invalid("Webhook 地址无效"))?;
+    if !matches!(url.scheme(), "http" | "https")
+        || url.host_str().is_none()
+        || !url.username().is_empty()
+        || url.password().is_some()
+        || url.fragment().is_some()
+    {
+        return Err(invalid(
+            "Webhook 地址必须为 HTTP / HTTPS，不能包含账号密码或片段",
+        ));
+    }
+    Ok(())
+}
+
 impl GitLab {
+    /// Build an authenticated client that validates certificates and never follows redirects.
     pub fn new(base_url: &str, token: String) -> Result<Self> {
         if token.trim().is_empty() {
             return Err(invalid("请输入访问令牌"));
@@ -63,7 +88,6 @@ impl GitLab {
         Ok(Self {
             client,
             base: normalize_url(base_url)?,
-            token,
         })
     }
 
@@ -73,13 +97,14 @@ impl GitLab {
             .map_err(|_| invalid("无法构建 GitLab API 地址"))
     }
 
+    /// Return only status-derived public errors without reading upstream failure response bodies.
     async fn send(
         &self,
         method: Method,
         url: Url,
         body: Option<&Value>,
     ) -> Result<reqwest::Response> {
-        // Pagination URLs come from GitLab but are still an external trust boundary.
+        // 1. Keep authenticated requests inside the configured instance, including pagination.
         if url.origin() != self.base.origin()
             || !url
                 .path()
@@ -87,7 +112,8 @@ impl GitLab {
         {
             return Err(invalid("GitLab 返回了实例范围之外的分页地址"));
         }
-        let request = self.client.request(method, url);
+        // 2. Send the requested operation and preserve successful responses for their typed readers.
+        let request = self.client.request(method.clone(), url);
         let response = match body {
             Some(body) => request.json(body),
             None => request,
@@ -97,15 +123,22 @@ impl GitLab {
         if response.status().is_success() {
             return Ok(response);
         }
+        // 3. Error bodies may reflect encoded credentials; public messages use trusted metadata only.
         let status = response.status().as_u16();
-        let text = response.text().await?;
-        let mut safe = text.replace(&self.token, "[REDACTED]");
-        if let Some(secret) = body.and_then(|b| b.get("token")).and_then(Value::as_str)
-            && !secret.is_empty()
-        {
-            safe = safe.replace(secret, "[REDACTED]");
-        }
-        let message = safe.chars().take(500).collect();
+        let reason = match status {
+            300..=399 => "实例地址发生重定向，请检查连接配置",
+            400 => "请求参数无效，请核对配置",
+            401 => "身份验证失败，请检查访问令牌",
+            403 => "权限不足，请检查令牌范围和项目权限",
+            404 => "接口或资源不存在，或当前账号无权访问",
+            405 => "接口不支持此操作",
+            409 => "资源状态冲突，请重新预览",
+            422 => "配置未通过服务端校验，请核对输入",
+            429 => "请求频率受限，请稍后手动重试",
+            500..=599 => "GitLab 服务端发生错误",
+            _ => "GitLab 未能完成请求",
+        };
+        let message = format!("{} 请求失败：{reason}", method.as_str());
         Err(Error::Api { status, message })
     }
 
@@ -246,6 +279,64 @@ impl GitLab {
 
     pub async fn hooks(&self, id: u64) -> Result<Vec<Hook>> {
         self.list(&format!("projects/{id}/hooks"), &[]).await
+    }
+
+    /// Return exact URL or name matches with four project reads in flight and stable ordering.
+    pub async fn check_webhooks(
+        &self,
+        project_ids: Vec<u64>,
+        query: &WebhookQuery,
+    ) -> Result<Vec<ProjectWebhookCheck>> {
+        // 1. Validate the inspection scope; receiver URLs are compared, never requested.
+        let value = query.value.trim();
+        match query.field {
+            WebhookMatchField::Url => validate_webhook_url(value)?,
+            WebhookMatchField::Name if value.is_empty() => {
+                return Err(invalid("请输入 Webhook 名称"));
+            }
+            WebhookMatchField::Name => {}
+        }
+        if project_ids.is_empty() {
+            return Err(invalid("请选择要检查的仓库"));
+        }
+        let mut seen = HashSet::new();
+        let ids: Vec<_> = project_ids
+            .into_iter()
+            .filter(|id| seen.insert(*id))
+            .collect();
+
+        // 2. Read every hook page per project, preserving failures separately from missing URLs.
+        let mut checked = stream::iter(ids.into_iter().enumerate())
+            .map(|(index, project_id)| async move {
+                let result = match self.hooks(project_id).await {
+                    Ok(hooks) => {
+                        let hooks: Vec<_> = hooks
+                            .into_iter()
+                            .filter(|hook| match query.field {
+                                WebhookMatchField::Url => hook.url == value,
+                                WebhookMatchField::Name => hook.name.as_deref() == Some(value),
+                            })
+                            .collect();
+                        let count = hooks.len();
+                        if count == 0 {
+                            WebhookPresence::Missing
+                        } else {
+                            WebhookPresence::Present { count, hooks }
+                        }
+                    }
+                    Err(error) => WebhookPresence::Error {
+                        message: error.to_string(),
+                    },
+                };
+                (index, ProjectWebhookCheck { project_id, result })
+            })
+            .buffer_unordered(4)
+            .collect::<Vec<_>>()
+            .await;
+
+        // 3. Return one outcome per unique project in the caller's original order.
+        checked.sort_unstable_by_key(|(index, _)| *index);
+        Ok(checked.into_iter().map(|(_, result)| result).collect())
     }
 
     pub async fn members(&self, id: u64, inherited: bool) -> Result<Vec<Member>> {

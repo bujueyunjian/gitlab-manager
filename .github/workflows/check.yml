@@ -14,10 +14,12 @@ jobs:
           runtime: node@24
           require-lockfile: true
       - run: rustup update stable --no-self-update
-      - run: rustup component add clippy rustfmt
+      - run: rustup component add clippy rustfmt rust-docs
       - run: pnpm check
       - run: pnpm format:check
       - run: pnpm build
+      - name: Generate third-party notices
+        run: node scripts/generate-third-party-notices.mjs
       - run: cargo fmt --manifest-path src-tauri/Cargo.toml --check
       - run: cargo test --manifest-path src-tauri/Cargo.toml --locked
       - run: cargo clippy --manifest-path src-tauri/Cargo.toml --locked --all-targets -- -D warnings

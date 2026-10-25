@@ -1,4 +1,4 @@
-import { invoke, isTauri } from "@tauri-apps/api/core";
+import { Channel, invoke, isTauri } from "@tauri-apps/api/core";
 import type {
   Connection,
   Group,
@@ -8,7 +8,10 @@ import type {
   Project,
   ProjectFilter,
   ProjectResources,
+  ProjectWebhookCheck,
   Resolution,
+  ReadProgress,
+  WebhookQuery,
   Task,
   User,
 } from "./types";
@@ -39,6 +42,8 @@ async function call<T>(command: string, args?: Record<string, unknown>): Promise
 }
 
 export const api = {
+  /** Open the bundled offline manual in the system browser. */
+  openManual: () => call<void>("open_user_manual"),
   connections: () => call<Connection[]>("list_connections"),
   saveConnection: (input: { id: string | null; name: string; baseUrl: string; token: string }) =>
     call<Connection>("save_connection", { input }),
@@ -46,10 +51,26 @@ export const api = {
   deleteConnection: (connectionId: string) => call<void>("delete_connection", { connectionId }),
   projects: (connectionId: string, filter: ProjectFilter) =>
     call<Project[]>("list_projects", { connectionId, filter }),
-  resolve: (connectionId: string, inputs: string[]) =>
-    call<Resolution[]>("resolve_projects", { connectionId, inputs }),
-  resources: (connectionId: string, projectIds: number[]) =>
-    call<ProjectResources[]>("read_resources", { connectionId, projectIds }),
+  resolve: (connectionId: string, inputs: string[], onProgress: (progress: ReadProgress) => void) =>
+    call<Resolution[]>("resolve_projects", {
+      connectionId,
+      inputs,
+      onProgress: new Channel(onProgress),
+    }),
+  resources: (
+    connectionId: string,
+    projectIds: number[],
+    kind: "hooks" | "members",
+    onProgress: (progress: ReadProgress) => void,
+  ) =>
+    call<ProjectResources[]>("read_resources", {
+      connectionId,
+      projectIds,
+      kind,
+      onProgress: new Channel(onProgress),
+    }),
+  checkWebhooks: (connectionId: string, projectIds: number[], query: WebhookQuery) =>
+    call<ProjectWebhookCheck[]>("check_webhooks", { connectionId, projectIds, query }),
   users: (connectionId: string, search: string) =>
     call<User[]>("search_users", { connectionId, search }),
   groups: (connectionId: string, search: string) =>

@@ -57,6 +57,8 @@ jobs:
           sudo apt-get install -y --no-install-recommends build-essential pkg-config file libwebkit2gtk-4.1-dev libayatana-appindicator3-dev librsvg2-dev libssl-dev libxdo-dev patchelf xdg-utils
       - name: Set up Rust
         run: rustup update stable --no-self-update
+      - name: Install Rust library license material
+        run: rustup component add rust-docs
       - name: Add macOS targets
         if: runner.os == 'macOS'
         run: rustup target add aarch64-apple-darwin x86_64-apple-darwin

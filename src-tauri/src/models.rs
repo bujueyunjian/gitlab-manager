@@ -84,6 +84,39 @@ pub struct Hook {
     pub signing_token_present: Option<bool>,
 }
 
+/// Exact field to inspect; webhook names are available only on supported GitLab versions.
+#[derive(Clone, Copy, Debug, Deserialize, PartialEq)]
+#[serde(rename_all = "snake_case")]
+pub enum WebhookMatchField {
+    Url,
+    Name,
+}
+
+/// Read-only webhook query, independent of any later modification request.
+#[derive(Deserialize)]
+pub struct WebhookQuery {
+    pub field: WebhookMatchField,
+    pub value: String,
+}
+
+/// Exact matches after reading every page; only public configuration fields are returned.
+#[derive(Debug, Serialize)]
+#[serde(tag = "status", rename_all = "camelCase")]
+pub enum WebhookPresence {
+    Present { count: usize, hooks: Vec<Hook> },
+    Missing,
+    Error { message: String },
+}
+
+/// One project's inspection outcome; no response token values are retained or serialized.
+#[derive(Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ProjectWebhookCheck {
+    pub project_id: u64,
+    #[serde(flatten)]
+    pub result: WebhookPresence,
+}
+
 #[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct Member {
     pub id: u64,
@@ -114,17 +147,46 @@ pub struct ProjectShares {
     pub shared_with_groups: Vec<Share>,
 }
 
+/// One requested project's outcome; metadata failures retain identity without fabricating project data.
 #[derive(Serialize)]
-#[serde(rename_all = "camelCase")]
-pub struct ProjectResources {
-    pub project: Project,
-    pub hooks: ReadResult<Vec<Hook>>,
-    pub members: ReadResult<MemberList>,
+#[serde(
+    tag = "status",
+    rename_all = "snake_case",
+    rename_all_fields = "camelCase"
+)]
+pub enum ProjectResources {
+    Ready {
+        project_id: u64,
+        project: Box<Project>,
+        hooks: ReadResult<Vec<Hook>>,
+        members: ReadResult<MemberList>,
+    },
+    Error {
+        project_id: u64,
+        message: String,
+    },
+}
+
+/// The resource page determines which remote endpoints are needed.
+#[derive(Clone, Copy, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum ResourceKind {
+    Hooks,
+    Members,
+}
+
+/// Completed read units, including failed units; contains no input text or credentials.
+#[derive(Clone, Copy, Debug, Serialize)]
+pub struct ReadProgress {
+    pub total: usize,
+    pub completed: usize,
+    pub failed: usize,
 }
 
 #[derive(Serialize)]
 #[serde(tag = "status", rename_all = "snake_case")]
 pub enum ReadResult<T> {
+    NotRequested,
     Ready { data: T },
     Error { message: String },
 }

@@ -5,7 +5,7 @@ use uuid::Uuid;
 
 use crate::{
     error::{Result, invalid},
-    gitlab::GitLab,
+    gitlab::{GitLab, supports_webhook_names, validate_webhook_url},
     models::*,
 };
 
@@ -170,21 +170,6 @@ pub fn differences(before: Option<&Value>, body: &Value) -> Vec<Change> {
         .collect()
 }
 
-fn validate_webhook_url(value: &str) -> Result<()> {
-    let url = url::Url::parse(value).map_err(|_| invalid("Webhook 地址无效"))?;
-    if !matches!(url.scheme(), "http" | "https")
-        || url.host_str().is_none()
-        || !url.username().is_empty()
-        || url.password().is_some()
-        || url.fragment().is_some()
-    {
-        return Err(invalid(
-            "Webhook 地址必须为 HTTP / HTTPS，不能包含账号密码或片段",
-        ));
-    }
-    Ok(())
-}
-
 /// Validate requested changes against the server's supported webhook fields.
 fn validate_hook_request(request: &HookRequest, names_supported: bool) -> Result<()> {
     // 1. Validate the operation and explicitly selected targets.
@@ -241,13 +226,14 @@ fn validate_hook_request(request: &HookRequest, names_supported: bool) -> Result
     Ok(())
 }
 
-/// Classify only after a complete successful read. A failed read is never a missing Hook.
+/// Classify a complete read without replacing a previously selected Hook ID or treating failure as absence.
 pub fn classify_hook(
     project: &Project,
     request: &HookRequest,
     hooks: &[Hook],
     hook_id: Option<u64>,
 ) -> Result<PlanItem> {
+    // 1. Resolve exact candidates, with an explicit target ID taking precedence over generic choices.
     let mut item = new_item(project, Resource::Hook);
     let matches: Vec<_> = hooks
         .iter()
@@ -260,10 +246,25 @@ pub fn classify_hook(
         prepare_item(&mut item, Action::Skip, "已存在相同地址，未重复创建");
         return Ok(item);
     }
-    let selected = request.choices.get(&project.id);
-    if matches.len() > 1 && !matches.iter().any(|h| Some(&h.id) == selected) {
+    // 2. A previous choice remains binding even when only one or no URL matches remain.
+    let selected = if hook_id.is_none() && request.mode != "create" {
+        request.choices.get(&project.id).copied()
+    } else {
+        None
+    };
+    let selected_missing = selected.is_some_and(|id| !matches.iter().any(|hook| hook.id == id));
+    if selected_missing && matches.is_empty() {
+        item.message = "已选 Hook 已不存在或不再匹配此地址，请关闭弹窗后重新查询并选择配置".into();
+        return Ok(item);
+    }
+    if selected_missing || (matches.len() > 1 && selected.is_none()) {
         item.action = Action::Conflict;
-        item.message = "同一地址存在多个 Hook，请选择具体条目".into();
+        item.message = if selected_missing {
+            "已选 Hook 已不存在或不再匹配此地址，请重新选择具体条目"
+        } else {
+            "同一地址存在多个 Hook，请选择具体条目"
+        }
+        .into();
         item.candidates = matches
             .iter()
             .map(|h| HookChoice {
@@ -273,11 +274,11 @@ pub fn classify_hook(
             .collect();
         return Ok(item);
     }
-    let existing = if matches.len() > 1 {
-        matches.into_iter().find(|h| Some(&h.id) == selected)
-    } else {
-        matches.first().copied()
+    let existing = match selected {
+        Some(id) => matches.into_iter().find(|hook| hook.id == id),
+        None => matches.first().copied(),
     };
+    // 3. Apply operation, uniqueness and authentication rules before constructing a write.
     if request.mode == "delete" {
         match existing {
             Some(h) => {
@@ -302,6 +303,32 @@ pub fn classify_hook(
         item.message = "指定 Hook 已不存在，请重新选择".into();
         return Ok(item);
     }
+    // A name is not a unique identifier. Do not create another target when the same name already exists.
+    if existing.is_none()
+        && request
+            .creation
+            .as_ref()
+            .and_then(|creation| creation.name.as_deref())
+            .is_some_and(|name| {
+                hooks
+                    .iter()
+                    .any(|hook| hook.name.as_deref() == Some(name.trim()))
+            })
+    {
+        item.message = "已存在同名但地址不同的 Webhook，请先查看并明确选择已有配置后修改".into();
+        return Ok(item);
+    }
+    if let (Some(existing), Some(name)) = (existing, request.name.as_deref()) {
+        let name = name.trim();
+        if existing.name.as_deref() != Some(name)
+            && hooks
+                .iter()
+                .any(|hook| hook.id != existing.id && hook.name.as_deref() == Some(name))
+        {
+            item.message = "其他 Webhook 已使用此名称，请核对已有配置或选择其他名称".into();
+            return Ok(item);
+        }
+    }
     let target_url = request.url.as_deref().unwrap_or(
         existing
             .map(|h| h.url.as_str())
@@ -323,6 +350,7 @@ pub fn classify_hook(
         item.target_id = Some(h.id);
         item.before = Some(hook_snapshot(h));
     }
+    // 4. Build selected fields for an existing target or the complete configuration for creation.
     let mut body = Map::new();
     // GitLab requires URL on PUT, even when it is unchanged. Other fields are sent only when selected.
     body.insert("url".into(), json!(target_url));
@@ -395,9 +423,7 @@ pub async fn hooks(
     request: HookRequest,
 ) -> Result<PreparedPlan> {
     // 1. Reject unsupported fields before scanning projects.
-    let version = semver::Version::parse(&connection.version)
-        .map_err(|_| invalid("GitLab 版本号格式无效，请重新检查连接"))?;
-    validate_hook_request(&request, (version.major, version.minor) >= (17, 1))?;
+    validate_hook_request(&request, supports_webhook_names(&connection.version)?)?;
 
     // 2. Read complete project configuration and classify the requested changes.
     let mut ids = request.project_ids.clone();

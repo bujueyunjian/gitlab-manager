@@ -65,12 +65,37 @@ export interface Share {
   group_access_level: number;
   expires_at: string | null;
 }
-export type ReadResult<T> = { status: "ready"; data: T } | { status: "error"; message: string };
-export interface ProjectResources {
-  project: Project;
-  hooks: ReadResult<Hook[]>;
-  members: ReadResult<{ direct: Member[]; all: Member[]; shares: Share[] }>;
+export type ReadResult<T> =
+  { status: "not_requested" } | { status: "ready"; data: T } | { status: "error"; message: string };
+/** Progress counts only completed inputs or projects, including failed reads. */
+export interface ReadProgress {
+  total: number;
+  completed: number;
+  failed: number;
 }
+/** Exact webhook query; name matching is offered only by supported GitLab versions. */
+export interface WebhookQuery {
+  field: "url" | "name";
+  value: string;
+}
+/** Complete inspection with safe hook metadata; an unavailable read is never a missing webhook. */
+export type ProjectWebhookCheck = { projectId: number } & (
+  | { status: "present"; count: number; hooks: Hook[] }
+  | { status: "missing" }
+  | { status: "error"; message: string }
+);
+export type WebhookPresenceFilter =
+  "all" | "present" | "duplicate" | "missing" | "error" | "unchecked";
+/** Each requested ID survives independently; only successful metadata reads include a Project. */
+export type ProjectResources = { projectId: number } & (
+  | {
+      status: "ready";
+      project: Project;
+      hooks: ReadResult<Hook[]>;
+      members: ReadResult<{ direct: Member[]; all: Member[]; shares: Share[] }>;
+    }
+  | { status: "error"; message: string }
+);
 /** Repository filters match the current user's effective role exactly; null includes all roles. */
 export interface ProjectFilter {
   search: string;

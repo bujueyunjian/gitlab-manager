@@ -5,7 +5,10 @@ import { api, errorMessage } from "./api";
 import { inputLines, resolvedSelection } from "./domain";
 import type { Project } from "./types";
 import { Badge, Button, Dialog, ErrorBox } from "./ui";
+import { ReadProgressView } from "./ReadProgress";
+import { useReadProgress } from "./useReadProgress";
 
+/** Resolve user references with per-input progress before allowing an explicit selection. */
 export function ResolveDialog({
   connectionId,
   onClose,
@@ -17,8 +20,12 @@ export function ResolveDialog({
 }) {
   const [text, setText] = useState("");
   const [choices, setChoices] = useState<Record<number, number>>({});
+  const progress = useReadProgress(connectionId);
   const search = useMutation({
-    mutationFn: () => api.resolve(connectionId, inputLines(text)),
+    mutationFn: () =>
+      progress.track(inputLines(text).length, (report) =>
+        api.resolve(connectionId, inputLines(text), report),
+      ),
     onSuccess: () => setChoices({}),
   });
   const selected = resolvedSelection(search.data ?? [], choices);
@@ -72,6 +79,7 @@ export function ResolveDialog({
         <span>仓库地址或应用名</span>
         <textarea
           className="repository-input"
+          disabled={search.isPending}
           value={text}
           onChange={(e) => changeText(e.target.value)}
           placeholder={
@@ -81,6 +89,7 @@ export function ResolveDialog({
           autoFocus
         />
       </label>
+      {search.isPending && <ReadProgressView title="正在定位仓库" progress={progress.state} />}
       {search.error && <ErrorBox message={errorMessage(search.error)} />}
       {search.data && (
         <div className="table-scroll resolve-results">

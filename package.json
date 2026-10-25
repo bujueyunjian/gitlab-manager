@@ -18,10 +18,11 @@
     "format": "prettier --write src scripts *.json *.ts *.html *.md .github",
     "format:check": "prettier --check src scripts *.json *.ts *.html *.md .github",
     "privacy:check": "node scripts/check-privacy.mjs",
-    "tauri": "tauri",
+    "test:scripts": "node --test scripts/*.test.mjs",
+    "tauri": "node scripts/tauri.mjs",
     "desktop:dev": "tauri dev",
-    "desktop:build": "tauri build",
-    "check": "pnpm typecheck && pnpm test && pnpm privacy:check"
+    "desktop:build": "node scripts/tauri.mjs build",
+    "check": "pnpm typecheck && pnpm test && pnpm test:scripts && pnpm privacy:check"
   },
   "dependencies": {
     "@tanstack/react-query": "5.104.4",

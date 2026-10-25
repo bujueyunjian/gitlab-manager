@@ -6,6 +6,7 @@ use std::{
     },
 };
 
+use futures_util::{StreamExt, stream};
 use tauri::Emitter;
 use uuid::Uuid;
 
@@ -186,66 +187,156 @@ impl Service {
         Ok(())
     }
 
-    pub async fn resolve_projects(&self, id: &str, inputs: Vec<String>) -> Result<Vec<Resolution>> {
+    /// Resolve at most four references concurrently, reporting each completion in input order only at return.
+    pub async fn resolve_projects(
+        &self,
+        id: &str,
+        inputs: Vec<String>,
+        mut report: impl FnMut(ReadProgress) -> Result<()>,
+    ) -> Result<Vec<Resolution>> {
+        // 1. Validate the connection and publish the real number of input units.
         let (_, client) = self.client(id)?;
-        let mut rows = vec![];
-        for input in inputs {
-            let result = client.resolve(&input).await;
-            rows.push(match result {
-                Ok(candidates) => Resolution {
-                    input,
-                    candidates,
-                    error: None,
-                },
-                Err(error) => Resolution {
-                    input,
-                    candidates: vec![],
-                    error: Some(error.to_string()),
-                },
-            });
+        let mut progress = ReadProgress {
+            total: inputs.len(),
+            completed: 0,
+            failed: 0,
+        };
+        report(progress)?;
+        let mut pending = stream::iter(inputs.into_iter().enumerate())
+            .map(|(index, input)| {
+                let client = &client;
+                async move {
+                    let row = match client.resolve(&input).await {
+                        Ok(candidates) => Resolution {
+                            input,
+                            candidates,
+                            error: None,
+                        },
+                        Err(error) => Resolution {
+                            input,
+                            candidates: vec![],
+                            error: Some(error.to_string()),
+                        },
+                    };
+                    (index, row)
+                }
+            })
+            .buffer_unordered(4);
+        // 2. Count completed reads, including failures, without guessing request durations.
+        let mut rows = Vec::new();
+        while let Some((index, row)) = pending.next().await {
+            progress.completed += 1;
+            progress.failed += usize::from(row.error.is_some());
+            report(progress)?;
+            rows.push((index, row));
         }
-        Ok(rows)
+        // 3. Preserve input order so ambiguous-choice indices remain stable.
+        rows.sort_by_key(|(index, _)| *index);
+        Ok(rows.into_iter().map(|(_, row)| row).collect())
     }
 
+    /// Read four project pipelines concurrently, retaining every project outcome in input order.
     pub async fn resources(
         &self,
         id: &str,
         project_ids: Vec<u64>,
+        kind: ResourceKind,
+        mut report: impl FnMut(ReadProgress) -> Result<()>,
     ) -> Result<Vec<ProjectResources>> {
+        // 1. Deduplicate the scope before reporting totals or dispatching HTTP requests.
         let (_, client) = self.client(id)?;
         let mut seen = HashSet::new();
-        let mut result = vec![];
-        for project_id in project_ids.into_iter().filter(|id| seen.insert(*id)) {
-            let project = client.project(project_id).await?;
-            let hooks = match client.hooks(project_id).await {
-                Ok(data) => ReadResult::Ready { data },
-                Err(e) => ReadResult::Error {
-                    message: e.to_string(),
-                },
-            };
-            let members = match tokio::try_join!(
-                client.members(project_id, false),
-                client.members(project_id, true),
-                client.shares(project_id)
-            ) {
-                Ok((direct, all, shares)) => ReadResult::Ready {
-                    data: MemberList {
+        let ids: Vec<_> = project_ids
+            .into_iter()
+            .filter(|id| seen.insert(*id))
+            .collect();
+        let mut progress = ReadProgress {
+            total: ids.len(),
+            completed: 0,
+            failed: 0,
+        };
+        report(progress)?;
+        let mut pending = stream::iter(ids.into_iter().enumerate())
+            .map(|(index, project_id)| {
+                let client = &client;
+                async move {
+                    let result = Self::read_project_resources(client, project_id, kind).await;
+                    (index, result)
+                }
+            })
+            .buffer_unordered(4);
+        // 2. Finish one project's requested resources before marking that project complete.
+        let mut rows = Vec::new();
+        while let Some((index, result)) = pending.next().await {
+            progress.completed += 1;
+            progress.failed += usize::from(match &result {
+                ProjectResources::Error { .. } => true,
+                ProjectResources::Ready { hooks, members, .. } => {
+                    matches!(hooks, ReadResult::Error { .. })
+                        || matches!(members, ReadResult::Error { .. })
+                }
+            });
+            report(progress)?;
+            rows.push((index, result));
+        }
+        rows.sort_by_key(|(index, _)| *index);
+        Ok(rows.into_iter().map(|(_, row)| row).collect())
+    }
+
+    /// Keep each pipeline serial and distinguish unreadable project metadata from resource read failures.
+    async fn read_project_resources(
+        client: &GitLab,
+        project_id: u64,
+        kind: ResourceKind,
+    ) -> ProjectResources {
+        // 1. A project read failure ends only this project's pipeline and retains its requested ID.
+        let project = match client.project(project_id).await {
+            Ok(project) => project,
+            Err(error) => {
+                return ProjectResources::Error {
+                    project_id,
+                    message: error.to_string(),
+                };
+            }
+        };
+        // 2. Read only the active page's resource, retaining its existing failure contract.
+        let mut hooks = ReadResult::NotRequested;
+        let mut members = ReadResult::NotRequested;
+        match kind {
+            ResourceKind::Hooks => {
+                hooks = match client.hooks(project_id).await {
+                    Ok(data) => ReadResult::Ready { data },
+                    Err(error) => ReadResult::Error {
+                        message: error.to_string(),
+                    },
+                };
+            }
+            ResourceKind::Members => {
+                let result: Result<MemberList> = async {
+                    let direct = client.members(project_id, false).await?;
+                    let all = client.members(project_id, true).await?;
+                    let shares = client.shares(project_id).await?;
+                    Ok(MemberList {
                         direct,
                         all,
                         shares,
+                    })
+                }
+                .await;
+                members = match result {
+                    Ok(data) => ReadResult::Ready { data },
+                    Err(error) => ReadResult::Error {
+                        message: error.to_string(),
                     },
-                },
-                Err(error) => ReadResult::Error {
-                    message: error.to_string(),
-                },
-            };
-            result.push(ProjectResources {
-                project,
-                hooks,
-                members,
-            });
+                };
+            }
         }
-        Ok(result)
+        ProjectResources::Ready {
+            project_id,
+            project: Box::new(project),
+            hooks,
+            members,
+        }
     }
 
     pub async fn prepare_hooks(&self, request: HookRequest) -> Result<Plan> {
@@ -272,6 +363,7 @@ impl Service {
         Ok(())
     }
 
+    /// Start all executable items from the approved preview with its separate in-memory secret.
     pub fn start_plan(self: &Arc<Self>, id: &str, app: tauri::AppHandle) -> Result<Task> {
         self.ensure_idle()?;
         let mut pending = lock(&self.prepared)?;
@@ -314,9 +406,10 @@ impl Service {
             created_at: now(),
             updated_at: now(),
         };
-        self.launch(task, prepared.secret, app)
+        self.launch(task, None, prepared.secret, app)
     }
 
+    /// Resume all unsent items or retry only the explicitly selected failures.
     pub fn resume(
         self: &Arc<Self>,
         id: &str,
@@ -324,17 +417,30 @@ impl Service {
         secret: Option<String>,
         app: tauri::AppHandle,
     ) -> Result<Task> {
+        let (task, item_ids) = self.prepare_resume(id, item_ids, secret.as_deref())?;
+        self.launch(task, item_ids, secret, app)
+    }
+
+    /// Validate the run scope and its secret requirements without changing the saved task.
+    pub(crate) fn prepare_resume(
+        &self,
+        id: &str,
+        item_ids: Option<Vec<String>>,
+        secret: Option<&str>,
+    ) -> Result<(Task, Option<HashSet<String>>)> {
+        // 1. Validate the saved connection and exact retry identities before changing item states.
         self.ensure_idle()?;
         let mut task = self.db.task(id)?;
         let connection = self.db.connection(&task.connection_id)?;
         if connection.revision != task.connection_revision {
             return Err(invalid("连接身份或实例已变化，请重新预览"));
         }
-        if let Some(ids) = item_ids {
+        let item_ids = item_ids.map(|ids| ids.into_iter().collect::<HashSet<_>>());
+        if let Some(ids) = &item_ids {
             if ids.is_empty() {
                 return Err(invalid("请选择需要重试的失败项"));
             }
-            for id in &ids {
+            for id in ids {
                 if !task
                     .items
                     .iter()
@@ -349,20 +455,25 @@ impl Service {
                 }
             }
         }
-        if !task.items.iter().any(|i| i.status == ItemStatus::Pending) {
+        // 2. Only this run's pending items establish whether work or a fresh secret is required.
+        let in_scope = |item: &PlanItem| {
+            item.status == ItemStatus::Pending
+                && item_ids.as_ref().is_none_or(|ids| ids.contains(&item.id))
+        };
+        if !task.items.iter().any(in_scope) {
             return Err(invalid("没有尚未执行的条目"));
         }
         if task
             .items
             .iter()
-            .any(|i| i.status == ItemStatus::Pending && i.secret_required)
-            && secret.as_ref().is_none_or(|s| s.is_empty())
+            .any(|item| in_scope(item) && item.secret_required)
+            && secret.is_none_or(str::is_empty)
         {
             return Err(invalid(
                 "任务不保存密钥，请重新提供本次需要设置的接收端密钥",
             ));
         }
-        self.launch(task, secret, app)
+        Ok((task, item_ids))
     }
 
     pub fn stop(&self, id: &str) -> Result<()> {
@@ -395,9 +506,11 @@ impl Service {
         Ok(task)
     }
 
+    /// Persist the complete task and dispatch only the approved scope on the application runtime.
     fn launch(
         self: &Arc<Self>,
         mut task: Task,
+        item_ids: Option<HashSet<String>>,
         secret: Option<String>,
         app: tauri::AppHandle,
     ) -> Result<Task> {
@@ -427,6 +540,7 @@ impl Service {
                 &service,
                 &client,
                 &mut task,
+                item_ids.as_ref(),
                 secret.as_deref(),
                 &stop,
                 &progress,

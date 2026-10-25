@@ -149,6 +149,8 @@ export function HookDialog({
   projects,
   rows = [],
   initialMode = "ensure",
+  initialUrl = "",
+  initialName = "",
   onClose,
   onStarted,
   notify,
@@ -157,6 +159,8 @@ export function HookDialog({
   projects: Project[];
   rows?: HookRow[];
   initialMode?: HookRequest["mode"];
+  initialUrl?: string;
+  initialName?: string;
   onClose: () => void;
   onStarted: (task: Task) => void;
   notify: (message: string, error?: boolean) => void;
@@ -164,8 +168,8 @@ export function HookDialog({
   const first = rows[0]?.hook;
   const namesSupported = supportsWebhookNames(connection.version);
   const [mode, setMode] = useState(initialMode);
-  const [matchUrl, setMatchUrl] = useState(first?.url ?? "");
-  const [name, setName] = useState(first?.name ?? "");
+  const [matchUrl, setMatchUrl] = useState(first?.url ?? initialUrl);
+  const [name, setName] = useState(first?.name ?? initialName);
   const [url, setUrl] = useState(first?.url ?? "");
   const [events, setEvents] = useState<HookEvents>({
     push_events: first?.push_events ?? true,
@@ -239,7 +243,12 @@ export function HookDialog({
   return (
     <Dialog
       title={title}
-      description="先核对具体仓库与变更，确认后再发送请求。"
+      bodyKey={plan?.id ?? "settings"}
+      description={
+        connection.scopes === null
+          ? "令牌范围未知。批量修改需 api 范围，实际权限由 GitLab 校验。"
+          : "核对仓库与变更后确认执行。"
+      }
       wide
       busy={busy}
       onClose={close}
@@ -330,7 +339,7 @@ export function HookDialog({
                     placeholder="https://hooks.example.com/gitlab"
                     spellCheck={false}
                   />
-                  <small>精确匹配地址；同名或重复 Hook 会单独提示。</small>
+                  <small>按完整地址匹配。重复地址需要选择具体配置；同名异址会阻止新增。</small>
                 </label>
               )}
               <div className="form-section">
@@ -384,8 +393,32 @@ export function HookDialog({
                     ))}
                   </div>
                 </div>
+                <p className="scope-caption">更新触发事件时，勾选的事件开启，未勾选的事件关闭。</p>
+                <div className="edit-field">
+                  <label className="check-label">
+                    <input
+                      type="checkbox"
+                      checked={fields.secret}
+                      onChange={(e) => setFields({ ...fields, secret: e.target.checked })}
+                    />
+                    设置新密钥
+                  </label>
+                  <div>
+                    <input
+                      type="password"
+                      aria-label="Webhook 接收端密钥"
+                      disabled={!fields.secret}
+                      value={secret}
+                      onChange={(e) => setSecret(e.target.value)}
+                      autoComplete="off"
+                    />
+                    <small>
+                      已有密钥不回显；不选中时保持不变，空白不会清空。密钥仅用于本次执行。
+                    </small>
+                  </div>
+                </div>
                 <details className="help-details">
-                  <summary>地址、认证与 TLS 设置</summary>
+                  <summary>地址与 TLS 设置</summary>
                   <div className="edit-field">
                     <label className="check-label">
                       <input
@@ -423,29 +456,6 @@ export function HookDialog({
                       验证接收端证书
                     </label>
                   </div>
-                  <div className="edit-field">
-                    <label className="check-label">
-                      <input
-                        type="checkbox"
-                        checked={fields.secret}
-                        onChange={(e) => setFields({ ...fields, secret: e.target.checked })}
-                      />
-                      设置新密钥
-                    </label>
-                    <div>
-                      <input
-                        type="password"
-                        aria-label="Webhook 接收端密钥"
-                        disabled={!fields.secret}
-                        value={secret}
-                        onChange={(e) => setSecret(e.target.value)}
-                        autoComplete="off"
-                      />
-                      <small>
-                        已有密钥不回显；不选中时保持不变，空白不会清空。密钥仅用于本次执行。
-                      </small>
-                    </div>
-                  </div>
                 </details>
               </div>
             </>
@@ -481,11 +491,14 @@ export function HookDialog({
   );
 }
 
+/** Preview explicit repository and member targets; an inspected user can be preselected for grants. */
 export function PermissionDialog({
   connection,
   projects,
   rows = [],
   initialMode = "grant",
+  initialUsers = [],
+  initialRole,
   onClose,
   onStarted,
   notify,
@@ -494,14 +507,16 @@ export function PermissionDialog({
   projects: Project[];
   rows?: MemberRow[];
   initialMode?: PermissionRequest["mode"];
+  initialUsers?: User[];
+  initialRole?: number;
   onClose: () => void;
   onStarted: (task: Task) => void;
   notify: (message: string, error?: boolean) => void;
 }) {
   const [kind, setKind] = useState<"user" | "group">("user");
   const [search, setSearch] = useState("");
-  const [subjects, setSubjects] = useState<(User | Group)[]>([]);
-  const [role, setRole] = useState(rows[0]?.member.access_level ?? 30);
+  const [subjects, setSubjects] = useState<(User | Group)[]>(initialUsers);
+  const [role, setRole] = useState(initialRole ?? rows[0]?.member.access_level ?? 30);
   const [setRoleField, setSetRoleField] = useState(initialMode === "grant");
   const [updateExpiry, setUpdateExpiry] = useState(false);
   const [expiry, setExpiry] = useState("");
@@ -543,7 +558,12 @@ export function PermissionDialog({
   return (
     <Dialog
       title={deleting ? "批量撤销授权" : initialMode === "update" ? "批量修改授权" : "批量授权"}
-      description="权限由 GitLab 校验，其他来源的授权会被保留。"
+      bodyKey={plan?.id ?? "settings"}
+      description={
+        connection.scopes === null
+          ? "令牌范围未知。批量修改需 api 范围，实际权限由 GitLab 校验。"
+          : "权限由 GitLab 校验，其他来源的授权会被保留。"
+      }
       wide
       onClose={close}
       busy={busy}
@@ -659,7 +679,8 @@ export function PermissionDialog({
                     key={subject.id}
                     onClick={() => setSubjects(subjects.filter((s) => s.id !== subject.id))}
                   >
-                    {subject.name} ×
+                    {subject.name}{" "}
+                    {"username" in subject ? "@" + subject.username : subject.full_path} ×
                   </button>
                 ))}
               </div>

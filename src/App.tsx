@@ -2,13 +2,13 @@ import { useEffect, useMemo, useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { listen } from "@tauri-apps/api/event";
 import {
-  ArrowRight,
+  BookOpen,
   Check,
   ChevronRight,
   ExternalLink,
   FolderGit2,
   History,
-  Orbit,
+  GitBranch,
   Plus,
   Settings2,
   ShieldCheck,
@@ -44,6 +44,7 @@ export default function App() {
   const [connectionId, setConnectionId] = useState<string | null>(null);
   const [selected, setSelected] = useState<Map<number, Project>>(new Map());
   const [modal, setModal] = useState<Modal | null>(null);
+  const [resourceRevision, setResourceRevision] = useState(0);
   const [notice, setNotice] = useState<{ message: string; error: boolean } | null>(null);
   const connections = useQuery({
     queryKey: ["connections"],
@@ -84,6 +85,10 @@ export default function App() {
     mutationFn: (project: Project) => api.openProject(connectionId!, project.id),
     onError: (e) => notify(errorMessage(e), true),
   });
+  const openManual = useMutation({
+    mutationFn: api.openManual,
+    onError: (e) => notify(errorMessage(e), true),
+  });
   const workspace = connection
     ? {
         connection,
@@ -122,6 +127,7 @@ export default function App() {
         [
           "resources-updated",
           () => {
+            setResourceRevision((revision) => revision + 1);
             void queryClient.invalidateQueries({ queryKey: ["resources"] });
             void queryClient.invalidateQueries({ queryKey: ["projects"] });
           },
@@ -158,7 +164,7 @@ export default function App() {
         <aside className="sidebar">
           <div className="brand">
             <span className="brand-mark">
-              <Orbit size={24} />
+              <GitBranch size={22} />
             </span>
             <div>
               <strong>GitLab 管理器</strong>
@@ -193,13 +199,18 @@ export default function App() {
               <Settings2 size={19} />
               <span>连接配置</span>
             </button>
+            <button
+              className="nav-button"
+              aria-label="使用手册"
+              title="使用手册（离线）"
+              disabled={!desktop || openManual.isPending}
+              onClick={() => openManual.mutate()}
+            >
+              <BookOpen size={19} />
+              <span>使用手册</span>
+            </button>
           </div>
           <div className="sidebar-bottom">
-            <div className="sidebar-help">
-              <strong>让重复操作，一次完成。</strong>连接 GitLab，选择仓库，
-              <br />
-              预览后批量执行。
-            </div>
             <div className="profile">
               <span className="avatar">{connection ? connection.user.name.slice(0, 1) : "G"}</span>
               <div>
@@ -238,18 +249,13 @@ export default function App() {
               {!desktop && <span className="prototype-label">网页界面预览</span>}
             </div>
           </header>
-          <main className="content">
+          <main key={page} className="content">
             {!desktop && (
               <div className="hint">
                 此页面只用于查看界面。请启动桌面应用以安全连接 GitLab，网页不会读取令牌或访问仓库。
               </div>
             )}
             {connections.error && <ErrorBox message={errorMessage(connections.error)} />}
-            {connection?.scopes === null && page !== "connections" && page !== "tasks" && (
-              <div className="hint">
-                当前 GitLab 版本无法读取令牌范围。批量修改需要 api 范围，实际权限由 GitLab 校验。
-              </div>
-            )}
             {desktop && connections.isPending ? (
               <Loading>正在读取本地连接…</Loading>
             ) : page === "tasks" ? (
@@ -261,39 +267,30 @@ export default function App() {
                 <Tasks tasks={tasks.data ?? []} onOpen={(id) => setModal({ type: "task", id })} />
               )
             ) : !connection ? (
-              <div className="onboarding">
-                <div className="onboarding-symbol">
-                  <Orbit size={42} />
+              <section className="connection-start" aria-labelledby="connection-start-title">
+                <h1 id="connection-start-title">连接 GitLab</h1>
+                <p>添加实例地址和访问令牌，开始管理仓库权限与 Webhook。</p>
+                <div className="button-group">
+                  <Button
+                    variant="primary"
+                    disabled={!desktop}
+                    onClick={() => setModal({ type: "connection" })}
+                  >
+                    <Plus size={17} />
+                    添加连接
+                  </Button>
+                  <Button
+                    disabled={!desktop}
+                    busy={openManual.isPending}
+                    onClick={() => openManual.mutate()}
+                  >
+                    <BookOpen size={17} />
+                    查看使用手册
+                  </Button>
                 </div>
-                <span className="eyebrow">GitLab 资源管理</span>
-                <h1>多个仓库，一次管理。</h1>
-                <p>批量设置成员权限与 Webhook。先预览变更，再查看每个仓库的执行结果。</p>
-                <div className="onboarding-steps">
-                  <span>
-                    <b>01</b>连接 GitLab
-                  </span>
-                  <ChevronRight size={15} />
-                  <span>
-                    <b>02</b>搜索或粘贴仓库
-                  </span>
-                  <ChevronRight size={15} />
-                  <span>
-                    <b>03</b>预览并批量执行
-                  </span>
-                </div>
-                <Button
-                  variant="primary"
-                  disabled={!desktop}
-                  onClick={() => setModal({ type: "connection" })}
-                >
-                  <Plus size={17} />
-                  添加 GitLab 连接
-                  <ArrowRight size={16} />
-                </Button>
-                <small>令牌由系统安全存储管理，不采集遥测数据。</small>
-              </div>
+              </section>
             ) : page === "repos" ? (
-              <RepositoriesPage key={connection.id} />
+              <RepositoriesPage key={connection.id} resourceRevision={resourceRevision} />
             ) : page === "hooks" ? (
               <HooksPage key={connection.id} />
             ) : page === "permissions" ? (
@@ -346,6 +343,8 @@ export default function App() {
             projects={modal.projects}
             rows={modal.rows}
             initialMode={modal.mode}
+            initialUrl={modal.initialUrl}
+            initialName={modal.initialName}
             onClose={() => setModal(null)}
             onStarted={started}
             notify={notify}
@@ -360,6 +359,8 @@ export default function App() {
             projects={modal.projects}
             rows={modal.rows}
             initialMode={modal.mode}
+            initialUsers={modal.initialUsers}
+            initialRole={modal.initialRole}
             onClose={() => setModal(null)}
             onStarted={started}
             notify={notify}

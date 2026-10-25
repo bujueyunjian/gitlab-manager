@@ -3,20 +3,21 @@ import { ArrowRight, Plus, Search, Trash2 } from "lucide-react";
 import { errorMessage } from "../api";
 import { eventLabels, uniqueProjects } from "../domain";
 import type { HookRow } from "../types";
-import { Badge, Button, Dialog, Empty, ErrorBox, Loading } from "../ui";
+import { Badge, Button, Dialog, Empty, ErrorBox } from "../ui";
 import { ResourceScope, ResourceErrors, useResources, useWorkspace } from "../Workspace";
+import { ReadProgressView } from "../ReadProgress";
+import { hookOverview } from "../resourceReads";
 
+/** Manage only successfully read, currently visible Hook targets; refreshes block cached write scopes. */
 export function HooksPage() {
   const { selected, selectedProjects, writable, setModal, changePage } = useWorkspace();
-  const resources = useResources();
+  const resources = useResources("hooks");
   const [resourceSearch, setResourceSearch] = useState("");
   const [hookEventsFilter, setHookEventsFilter] = useState("all");
   const [hookSelected, setHookSelected] = useState<Set<string>>(new Set());
   const hookKey = (row: HookRow) => `${row.project.id}:${row.hook.id}`;
-  const hookRows: HookRow[] = (resources.data ?? []).flatMap((resource) =>
-    resource.hooks.status === "ready"
-      ? resource.hooks.data.map((hook) => ({ project: resource.project, hook }))
-      : [],
+  const { projects: readableProjects, hooks: hookRows } = hookOverview(
+    resources.error ? [] : (resources.data ?? []),
   );
   const shownHooks = hookRows.filter(
     (row) =>
@@ -27,7 +28,8 @@ export function HooksPage() {
       (hookEventsFilter === "all" || row.hook[hookEventsFilter as keyof typeof eventLabels]),
   );
 
-  const chosen = hookRows.filter((row) => hookSelected.has(hookKey(row)));
+  const chosen = shownHooks.filter((row) => hookSelected.has(hookKey(row)));
+  const busyOrFailed = resources.isFetching || !!resources.error;
   return (
     <>
       <div className="page-heading">
@@ -37,11 +39,11 @@ export function HooksPage() {
         </div>
         <Button
           variant="primary"
-          disabled={!selected.size || !writable}
-          onClick={() => setModal({ type: "hook", mode: "ensure", projects: selectedProjects })}
+          disabled={!readableProjects.length || !writable || busyOrFailed}
+          onClick={() => setModal({ type: "hook", mode: "ensure", projects: readableProjects })}
         >
           <Plus size={16} />
-          批量设置
+          批量设置 ({readableProjects.length})
         </Button>
       </div>
       {<ResourceScope refresh={() => void resources.refetch()} fetching={resources.isFetching} />}
@@ -88,7 +90,7 @@ export function HooksPage() {
               <div className="button-group">
                 <Button
                   className="small"
-                  disabled={!writable}
+                  disabled={!writable || busyOrFailed}
                   onClick={() =>
                     setModal({
                       type: "hook",
@@ -102,7 +104,7 @@ export function HooksPage() {
                 </Button>
                 <Button
                   className="small"
-                  disabled={!writable}
+                  disabled={!writable || busyOrFailed}
                   onClick={() =>
                     setModal({
                       type: "hook",
@@ -118,13 +120,20 @@ export function HooksPage() {
               </div>
             </div>
           )}
-          {resources.isPending ? (
-            <Loading />
-          ) : resources.error ? (
+          {resources.isFetching && (
+            <ReadProgressView title="正在读取 Webhook" progress={resources.progress} />
+          )}
+          {resources.isPending ? null : resources.error ? (
             <ErrorBox message={errorMessage(resources.error)} />
           ) : (
             <>
-              {<ResourceErrors resources={resources.data ?? []} kind="hooks" />}
+              {
+                <ResourceErrors
+                  resources={resources.data ?? []}
+                  kind="hooks"
+                  projects={selectedProjects}
+                />
+              }
               <div className="table-scroll">
                 <table>
                   <thead>
@@ -133,6 +142,7 @@ export function HooksPage() {
                         <input
                           type="checkbox"
                           aria-label="选择筛选后的 Webhook"
+                          disabled={busyOrFailed}
                           checked={
                             shownHooks.length > 0 &&
                             shownHooks.every((row) => hookSelected.has(hookKey(row)))
@@ -163,6 +173,7 @@ export function HooksPage() {
                           <input
                             type="checkbox"
                             aria-label={`选择 Hook ${row.hook.id} · ${row.project.path_with_namespace}`}
+                            disabled={busyOrFailed}
                             checked={hookSelected.has(hookKey(row))}
                             onChange={(e) =>
                               setHookSelected((previous) => {
@@ -178,6 +189,7 @@ export function HooksPage() {
                         <td>
                           <button
                             className="repo-name"
+                            disabled={busyOrFailed}
                             onClick={() =>
                               setModal({
                                 type: "hookDetail",
@@ -217,8 +229,16 @@ export function HooksPage() {
                 </table>
               </div>
               {!shownHooks.length && (
-                <Empty title="没有匹配的 Webhook">
-                  可以调整筛选，或使用“批量设置”补齐缺失配置。
+                <Empty
+                  title={
+                    readableProjects.length
+                      ? "成功读取的仓库中没有匹配的 Webhook"
+                      : "没有成功读取的仓库"
+                  }
+                >
+                  {readableProjects.length
+                    ? "调整筛选，或在成功读取的仓库范围使用“批量设置”；失败项见上方说明。"
+                    : "检查上方读取错误后刷新，再进行配置。"}
                 </Empty>
               )}
             </>

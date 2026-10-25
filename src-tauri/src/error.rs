@@ -15,6 +15,10 @@ pub enum Error {
     Database(#[from] rusqlite::Error),
     #[error("无法读写应用数据目录")]
     Io(#[from] std::io::Error),
+    #[error("无法打开离线手册，请检查安装文件与默认浏览器设置")]
+    Manual(#[source] Box<dyn std::error::Error + Send + Sync>),
+    #[error("无法传递读取进度，请重新发起查询")]
+    Progress(#[source] tauri::Error),
     #[error("无法访问系统凭据存储")]
     Credentials(#[from] keyring::Error),
     #[error("{0}")]

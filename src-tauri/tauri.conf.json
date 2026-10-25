@@ -31,6 +31,9 @@
     "targets": "all",
     "publisher": "GitLab Manager contributors",
     "category": "DeveloperTool",
+    "resources": {
+      "../docs/user-manual.html": "help/user-manual.html"
+    },
     "shortDescription": "批量管理 GitLab 仓库权限与 Webhook",
     "macOS": {
       "signingIdentity": "-"

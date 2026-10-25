@@ -133,7 +133,7 @@ small {
   gap: 28px;
   padding: 26px 16px 18px;
   border-right: 1px solid var(--line);
-  background: linear-gradient(#ffffff, #f7fafd 80%);
+  background: var(--surface);
 }
 .brand {
   display: flex;
@@ -148,7 +148,7 @@ small {
   height: 38px;
   color: var(--accent);
   border: 1px solid var(--line);
-  border-radius: 50%;
+  border-radius: 8px;
   background: var(--accent-soft);
   border-color: var(--accent-line);
 }
@@ -204,20 +204,6 @@ small {
 .sidebar-bottom {
   margin-top: auto;
 }
-.sidebar-help {
-  padding: 14px 12px;
-  border: 1px solid var(--line);
-  border-radius: 6px;
-  background: var(--accent-soft);
-  color: var(--muted);
-  font-size: 11px;
-}
-.sidebar-help strong {
-  display: block;
-  margin-bottom: 6px;
-  color: var(--muted);
-  font-size: 12px;
-}
 .profile {
   display: flex;
   align-items: center;
@@ -252,7 +238,7 @@ small {
   flex-direction: column;
   min-width: 0;
   overflow: hidden;
-  background: radial-gradient(ellipse at 90% 0, #e4f1fb, transparent 50%), var(--canvas);
+  background: var(--canvas);
 }
 .topbar {
   height: 66px;
@@ -304,10 +290,6 @@ small {
   min-width: 0;
   overflow: auto;
   padding: 30px 32px 24px;
-  background-image:
-    linear-gradient(#57cde506 1px, transparent 1px),
-    linear-gradient(90deg, #57cde506 1px, transparent 1px);
-  background-size: 36px 36px;
 }
 .page-heading {
   position: relative;
@@ -323,24 +305,6 @@ small {
   margin-top: 7px;
   color: var(--muted);
   font-size: 12px;
-}
-.quantum-orbit {
-  position: absolute;
-  z-index: -1;
-  width: 220px;
-  height: 115px;
-  right: 260px;
-  top: -25px;
-  opacity: 0.6;
-  fill: none;
-  pointer-events: none;
-}
-.quantum-orbit ellipse {
-  stroke: #3799b638;
-  stroke-width: 0.75;
-}
-.quantum-orbit .orbit-core {
-  fill: #338eaa;
 }
 .button-group,
 .heading-actions {
@@ -468,6 +432,83 @@ small {
   width: auto;
   max-width: 190px;
   font-size: 11px;
+}
+.webhook-inspection {
+  padding: 16px 18px;
+  border-top: 1px solid var(--line);
+  background: var(--raised);
+}
+.webhook-inspection-heading {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  gap: 8px 16px;
+  margin-bottom: 10px;
+}
+.webhook-inspection-heading span,
+.webhook-inspection-results small {
+  color: var(--muted);
+  font-size: 12px;
+}
+.webhook-inspection-controls,
+.webhook-inspection-results,
+.webhook-inspection-progress {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 10px;
+}
+.webhook-inspection-controls input {
+  flex: 1 1 300px;
+  width: auto;
+  min-width: 180px;
+}
+.webhook-inspection-controls select {
+  width: auto;
+  max-width: 210px;
+}
+.hook-matches summary {
+  cursor: pointer;
+  white-space: nowrap;
+}
+.hook-matches ul {
+  list-style: none;
+  padding: 0;
+  margin: 10px 0 0;
+}
+.hook-matches li + li {
+  border-top: 1px solid var(--line);
+  padding-top: 8px;
+  margin-top: 8px;
+}
+.hook-matches small {
+  display: block;
+  max-width: 280px;
+  overflow-wrap: anywhere;
+  color: var(--muted);
+}
+.webhook-inspection-progress,
+.webhook-inspection-results {
+  margin-top: 12px;
+}
+.webhook-inspection-progress progress {
+  width: 180px;
+  height: 10px;
+  accent-color: var(--accent);
+}
+.webhook-inspection-results select {
+  width: auto;
+}
+.webhook-inspection-results small {
+  flex-basis: 100%;
+}
+.webhook-inspection-error small {
+  display: block;
+  max-width: 270px;
+  margin-top: 4px;
+  font-size: 11px;
+  color: var(--muted);
+  white-space: normal;
 }
 .search-box {
   position: relative;
@@ -747,59 +788,23 @@ tbody tr.selected-row {
   padding: 45px 20px;
   color: var(--accent);
 }
-.onboarding {
-  max-width: 800px;
-  margin: 10vh auto 40px;
-  text-align: center;
-}
-.onboarding-symbol {
-  display: grid;
-  place-items: center;
-  width: 88px;
-  height: 88px;
-  margin: 0 auto 22px;
-  color: var(--accent);
-  background: radial-gradient(circle, #dceff7, #f9fcff 75%);
+.connection-start {
+  max-width: 640px;
+  margin: 12vh auto 40px;
+  padding: 36px;
   border: 1px solid var(--line);
-  border-radius: 50%;
-  border-color: var(--accent-line);
+  border-radius: 8px;
+  background: var(--surface);
 }
-.eyebrow {
-  font-size: 11px;
-  color: var(--accent);
-  letter-spacing: 2px;
+.connection-start h1 {
+  font-size: 26px;
 }
-.onboarding h1 {
-  margin: 13px 0;
-  font-size: 34px;
-}
-.onboarding > p {
-  color: var(--muted);
-  font-size: 14px;
-  max-width: 560px;
-  margin: auto;
-}
-.onboarding > small {
-  display: block;
-  margin-top: 18px;
+.connection-start p {
+  margin: 12px 0 24px;
   color: var(--muted);
 }
-.onboarding-steps {
-  display: flex;
-  align-items: center;
-  justify-content: center;
+.connection-start .button-group {
   flex-wrap: wrap;
-  gap: 17px;
-  margin: 32px 0;
-  color: var(--muted);
-  font-size: 12px;
-}
-.onboarding-steps b {
-  color: var(--accent);
-  font:
-    12px ui-monospace,
-    monospace;
-  margin-right: 7px;
 }
 /* Dialogs stay native for keyboard focus and Escape semantics. */
 dialog {
@@ -927,6 +932,123 @@ dialog::backdrop {
 }
 .form-section h3 {
   color: var(--text);
+}
+.permission-lookup {
+  padding: 16px;
+  border-bottom: 1px solid var(--line);
+}
+.permission-user-form {
+  max-width: 640px;
+}
+.permission-user-form label {
+  display: block;
+  margin-bottom: 8px;
+  font-size: 12px;
+  font-weight: 600;
+}
+.permission-user-form input {
+  flex: 1;
+  min-width: 0;
+}
+.permission-user-results,
+.permission-current-user {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 10px;
+  margin-top: 12px;
+}
+.permission-user-results button {
+  display: flex;
+  gap: 10px;
+  padding: 8px 12px;
+  border: 1px solid var(--line);
+  border-radius: 5px;
+  text-align: left;
+}
+.permission-user-results button:hover {
+  border-color: var(--accent);
+  background: var(--accent-soft);
+}
+.permission-user-results span,
+.permission-current-user > span {
+  color: var(--muted);
+}
+.visually-hidden {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  overflow: hidden;
+  clip-path: inset(50%);
+  white-space: nowrap;
+}
+.home-members-toolbar {
+  padding-top: 10px;
+  padding-bottom: 10px;
+  border-top: 1px solid var(--line);
+}
+.permission-lookup.compact {
+  flex: 1 1 230px;
+  min-width: 210px;
+  padding: 0;
+  border: none;
+}
+.permission-lookup.compact .permission-current-user {
+  margin-top: 0;
+  flex-wrap: nowrap;
+}
+.permission-lookup.compact .permission-current-user strong {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.home-members-note {
+  padding-top: 8px;
+  padding-bottom: 8px;
+}
+.permission-projects td,
+.permission-projects th {
+  padding: 12px 10px;
+}
+.permission-projects td:first-child {
+  min-width: 210px;
+  max-width: 320px;
+}
+.permission-project-path,
+.permission-coverage-note {
+  overflow-wrap: anywhere;
+  white-space: normal;
+}
+.permission-coverage-note {
+  max-width: 220px;
+}
+.permission-projects .button-group {
+  flex-wrap: wrap;
+}
+.permission-scope-note {
+  padding: 12px 16px;
+  border-top: 1px solid var(--line);
+  color: var(--muted);
+  font-size: 11px;
+}
+.read-progress {
+  padding: 16px;
+  border-bottom: 1px solid var(--line);
+  background: var(--raised);
+}
+.read-progress-heading {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: space-between;
+  gap: 8px;
+  margin-bottom: 8px;
+}
+.read-progress progress {
+  display: block;
+  width: 100%;
+  height: 8px;
+  accent-color: var(--accent);
 }
 .scope-caption {
   color: var(--muted);
@@ -1367,10 +1489,6 @@ dialog::backdrop {
   .connection-grid {
     grid-template-columns: 1fr;
   }
-  .quantum-orbit {
-    opacity: 0.3;
-    right: 150px;
-  }
   .task-list-item {
     flex-wrap: wrap;
   }
@@ -1385,7 +1503,6 @@ dialog::backdrop {
   .brand > div,
   .nav-label,
   .nav-button > span,
-  .sidebar-help,
   .profile > div {
     display: none;
   }
@@ -1429,12 +1546,6 @@ dialog::backdrop {
   }
   .selection-bar .button-group {
     margin-left: 0;
-  }
-  .onboarding-steps {
-    gap: 10px;
-  }
-  .onboarding {
-    margin-top: 7vh;
   }
   .modal {
     width: 96vw;

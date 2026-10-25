@@ -18,7 +18,7 @@ export function Button({
   );
 }
 
-/** Native dialogs provide focus trapping and Escape behavior without a second UI framework. */
+/** Native dialogs trap focus; a new bodyKey resets scrolling when a workflow changes step. */
 export function Dialog({
   title,
   description,
@@ -28,6 +28,7 @@ export function Dialog({
   wide = false,
   drawer = false,
   busy = false,
+  bodyKey,
 }: {
   title: string;
   description?: string;
@@ -37,6 +38,7 @@ export function Dialog({
   wide?: boolean;
   drawer?: boolean;
   busy?: boolean;
+  bodyKey?: string;
 }) {
   const ref = useRef<HTMLDialogElement>(null);
   useEffect(() => {
@@ -62,7 +64,9 @@ export function Dialog({
           <X size={18} />
         </button>
       </header>
-      <div className={drawer ? "drawer-body" : "modal-body"}>{children}</div>
+      <div key={bodyKey} className={drawer ? "drawer-body" : "modal-body"}>
+        {children}
+      </div>
       {footer && <footer className="modal-foot">{footer}</footer>}
     </dialog>
   );
@@ -102,15 +106,5 @@ export function Loading({ children = "正在读取…" }: { children?: ReactNode
       <LoaderCircle className="spin" size={18} />
       {children}
     </div>
-  );
-}
-export function OrbitDecoration() {
-  return (
-    <svg className="quantum-orbit" aria-hidden="true" viewBox="0 0 240 120">
-      <ellipse cx="120" cy="60" rx="105" ry="30" transform="rotate(-15 120 60)" />
-      <ellipse cx="120" cy="60" rx="82" ry="27" transform="rotate(25 120 60)" />
-      <ellipse cx="120" cy="60" rx="45" ry="45" />
-      <circle className="orbit-core" cx="120" cy="60" r="4" />
-    </svg>
   );
 }

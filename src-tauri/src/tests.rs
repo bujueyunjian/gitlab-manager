@@ -1,4 +1,10 @@
 //! Real HTTP and SQLite boundaries, with fictional data and no system credential access.
+#[path = "hook_query_tests.rs"]
+mod hook_queries;
+#[path = "read_tests.rs"]
+mod reads;
+#[path = "retry_scope_tests.rs"]
+mod retry_scope;
 use std::{
     collections::{HashMap, VecDeque},
     io::{Read, Write},
@@ -170,6 +176,14 @@ fn project() -> Project {
     )
     .unwrap()
 }
+/// Build an exact URL inspection query from fictional test input.
+fn hook_query(value: impl Into<String>) -> WebhookQuery {
+    WebhookQuery {
+        field: WebhookMatchField::Url,
+        value: value.into(),
+    }
+}
+
 fn hook(id: u64) -> Hook {
     serde_json::from_value(json!({"id":id,"name":"Build","url":"https://hooks.example.com/gitlab",
         "push_events":true,"merge_requests_events":false,"pipeline_events":false,"issues_events":false,
@@ -222,6 +236,7 @@ fn service() -> (tempfile::TempDir, Service) {
     (dir, service)
 }
 
+/// Creation, updates and unchanged fields stay distinct while invalid explicit choices require reselection.
 #[test]
 fn missing_existing_and_duplicate_hooks_have_distinct_plans() {
     let mut request = request();
@@ -248,6 +263,13 @@ fn missing_existing_and_duplicate_hooks_have_distinct_plans() {
         Some(8)
     );
     request.name = Some("Build".into());
+    assert_eq!(
+        planner::classify_hook(&project(), &request, &[hook(7)], None)
+            .unwrap()
+            .action,
+        Action::Conflict
+    );
+    request.choices.insert(1, 7);
     assert_eq!(
         planner::classify_hook(&project(), &request, &[hook(7)], None)
             .unwrap()
@@ -284,6 +306,252 @@ fn secrets_never_enter_serializable_plans_and_url_changes_require_authentication
             .status,
         ItemStatus::Blocked
     );
+}
+
+/// An exact match found on a later page counts duplicates and ignores URL substrings.
+#[tokio::test]
+async fn webhook_check_reads_all_pages_and_matches_exact_urls() {
+    let mut other = hook(1);
+    other.url.push('/');
+    let server = Server::new(vec![
+        Reply {
+            status: 200,
+            body: json!([other]),
+            headers: "Link: </api/v4/projects/9/hooks?page=2>; rel=\"next\"\r\n".into(),
+        },
+        reply(200, json!([hook(2), hook(3)])),
+    ]);
+    let checks = server
+        .client()
+        .check_webhooks(
+            vec![9, 9],
+            &hook_query(" https://hooks.example.com/gitlab "),
+        )
+        .await
+        .unwrap();
+    assert_eq!(checks.len(), 1);
+    assert_eq!(checks[0].project_id, 9);
+    assert!(matches!(
+        checks[0].result,
+        WebhookPresence::Present { count: 2, .. }
+    ));
+    let json = serde_json::to_value(&checks[0]).unwrap();
+    assert_eq!(json["status"], "present");
+    assert_eq!(json["projectId"], 9);
+    let requests = server.requests.lock().unwrap();
+    assert_eq!(requests.len(), 2);
+    assert!(requests.iter().all(|request| request.method == "GET"));
+}
+
+/// Only a successful full list can prove absence; API and decoding failures remain explicit.
+#[tokio::test]
+async fn webhook_check_does_not_turn_failed_reads_into_missing_hooks() {
+    for (status, body, missing) in [
+        (200, json!([]), true),
+        (200, json!([{"id": 1}]), false),
+        (
+            403,
+            json!({"message":"fictional-sensitive-upstream-value"}),
+            false,
+        ),
+    ] {
+        let server = Server::new(vec![reply(status, body)]);
+        let checks = server
+            .client()
+            .check_webhooks(vec![1], &hook_query("https://hooks.example.com/gitlab"))
+            .await
+            .unwrap();
+        assert_eq!(
+            matches!(checks[0].result, WebhookPresence::Missing),
+            missing
+        );
+        if !missing {
+            assert!(matches!(checks[0].result, WebhookPresence::Error { .. }));
+            assert!(
+                !serde_json::to_string(&checks)
+                    .unwrap()
+                    .contains("fictional-sensitive-upstream-value")
+            );
+        }
+    }
+    let server = Server::new(vec![
+        Reply {
+            status: 200,
+            body: json!([hook(1)]),
+            headers: "Link: </api/v4/projects/1/hooks?page=2>; rel=\"next\"\r\n".into(),
+        },
+        reply(500, json!({"message":"unavailable"})),
+    ]);
+    let checks = server
+        .client()
+        .check_webhooks(vec![1], &hook_query("https://hooks.example.com/gitlab"))
+        .await
+        .unwrap();
+    assert!(matches!(checks[0].result, WebhookPresence::Error { .. }));
+    assert_eq!(server.requests.lock().unwrap().len(), 2);
+}
+
+/// Reject unusable receiver URLs and empty scopes before making any GitLab request.
+#[tokio::test]
+async fn webhook_check_validates_its_boundary() {
+    let server = Server::new(vec![]);
+    for url in [
+        "",
+        "not-a-url",
+        "ftp://hooks.example.com/hook",
+        "https://hooks.example.com/hook#fragment",
+    ] {
+        assert!(
+            server
+                .client()
+                .check_webhooks(vec![1], &hook_query(url))
+                .await
+                .is_err()
+        );
+    }
+    let mut credential_url = url::Url::parse("https://hooks.example.com/hook").unwrap();
+    credential_url.set_username("fictional").unwrap();
+    credential_url.set_password(Some("fictional")).unwrap();
+    assert!(
+        server
+            .client()
+            .check_webhooks(vec![1], &hook_query(credential_url.as_str()))
+            .await
+            .is_err()
+    );
+    credential_url.set_username("").unwrap();
+    assert!(
+        server
+            .client()
+            .check_webhooks(vec![1], &hook_query(credential_url.as_str()))
+            .await
+            .is_err()
+    );
+    assert!(
+        server
+            .client()
+            .check_webhooks(vec![], &hook_query("https://hooks.example.com/gitlab"))
+            .await
+            .is_err()
+    );
+    assert!(server.requests.lock().unwrap().is_empty());
+}
+
+/// Parallel inspection is bounded, keeps input order, and isolates each project's permission failure.
+#[tokio::test]
+async fn webhook_check_limits_concurrency_and_preserves_per_project_results() {
+    use std::sync::atomic::AtomicUsize;
+    let listener = TcpListener::bind("127.0.0.1:0").unwrap();
+    listener.set_nonblocking(true).unwrap();
+    let address = format!("http://{}", listener.local_addr().unwrap());
+    let active = Arc::new(AtomicUsize::new(0));
+    let peak = Arc::new(AtomicUsize::new(0));
+    let captured_peak = peak.clone();
+    let worker = thread::spawn(move || {
+        let deadline = std::time::Instant::now() + Duration::from_secs(5);
+        let mut workers = Vec::new();
+        while workers.len() < 9 && std::time::Instant::now() < deadline {
+            let (mut socket, _) = match listener.accept() {
+                Ok(connection) => connection,
+                Err(error) if error.kind() == std::io::ErrorKind::WouldBlock => {
+                    thread::sleep(Duration::from_millis(2));
+                    continue;
+                }
+                Err(error) => panic!("fixture accept: {error}"),
+            };
+            let active = active.clone();
+            let peak = captured_peak.clone();
+            workers.push(thread::spawn(move || {
+                socket.set_nonblocking(false).unwrap();
+                socket.set_read_timeout(Some(Duration::from_secs(2))).unwrap();
+                let mut bytes = Vec::new();
+                let mut buffer = [0; 1024];
+                while !bytes.windows(4).any(|part| part == b"\r\n\r\n") {
+                    let read = socket.read(&mut buffer).unwrap();
+                    assert!(read > 0);
+                    bytes.extend_from_slice(&buffer[..read]);
+                }
+                let header = String::from_utf8(bytes).unwrap();
+                let path = header.lines().next().unwrap().split_whitespace().nth(1).unwrap();
+                let id: u64 = path.split('/').nth(4).unwrap().parse().unwrap();
+                let current = active.fetch_add(1, Ordering::SeqCst) + 1;
+                peak.fetch_max(current, Ordering::SeqCst);
+                thread::sleep(Duration::from_millis(40));
+                let (status, body) = if id == 3 { (403, json!({"message":"forbidden"})) }
+                    else if id == 2 { (200, json!([hook(1)])) } else { (200, json!([])) };
+                let body = body.to_string();
+                active.fetch_sub(1, Ordering::SeqCst);
+                write!(socket, "HTTP/1.1 {status} Test\r\nContent-Type: application/json\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{body}", body.len()).unwrap();
+            }));
+        }
+        let accepted = workers.len();
+        for worker in workers {
+            worker.join().unwrap();
+        }
+        accepted
+    });
+    let ids = vec![9, 3, 2, 1, 8, 4, 7, 6, 5, 2];
+    let client = GitLab::new(&address, TEST_TOKEN.into()).unwrap();
+    let checks = tokio::time::timeout(
+        Duration::from_secs(5),
+        client.check_webhooks(ids, &hook_query("https://hooks.example.com/gitlab")),
+    )
+    .await
+    .unwrap()
+    .unwrap();
+    assert_eq!(worker.join().unwrap(), 9);
+    assert!(peak.load(Ordering::SeqCst) > 1);
+    assert!(peak.load(Ordering::SeqCst) <= 4);
+    assert_eq!(
+        checks.iter().map(|row| row.project_id).collect::<Vec<_>>(),
+        [9, 3, 2, 1, 8, 4, 7, 6, 5]
+    );
+    assert!(matches!(checks[1].result, WebhookPresence::Error { .. }));
+    assert!(matches!(
+        checks[2].result,
+        WebhookPresence::Present { count: 1, .. }
+    ));
+    assert!(matches!(checks[0].result, WebhookPresence::Missing));
+}
+
+/// A hook created after inspection and preview blocks the later create instead of duplicating it.
+#[tokio::test]
+async fn missing_webhook_creation_still_rechecks_before_writing() {
+    let server = Server::new(vec![
+        reply(200, json!([])),
+        reply(200, json!(project())),
+        reply(200, json!([])),
+        reply(200, json!(project())),
+        reply(200, json!([hook(7)])),
+    ]);
+    let checks = server
+        .client()
+        .check_webhooks(vec![1], &hook_query("https://hooks.example.com/gitlab"))
+        .await
+        .unwrap();
+    assert!(matches!(checks[0].result, WebhookPresence::Missing));
+    let mut request = request();
+    request.mode = "create".into();
+    let prepared = planner::hooks(&server.client(), &connection(&server.url), request)
+        .await
+        .unwrap();
+    let (_dir, service) = service();
+    let mut task = task(prepared.plan.items);
+    runner::execute(
+        &service,
+        &server.client(),
+        &mut task,
+        None,
+        None,
+        &AtomicBool::new(false),
+        &|| {},
+    )
+    .await
+    .unwrap();
+    assert_eq!(task.items[0].status, ItemStatus::Failed);
+    let requests = server.requests.lock().unwrap();
+    assert_eq!(requests.len(), 5);
+    assert!(requests.iter().all(|request| request.method == "GET"));
 }
 
 /// Exact role filtering uses the displayed effective role and reads past nonmatching pages.
@@ -494,8 +762,201 @@ async fn pagination_never_forwards_credentials_outside_the_instance() {
     assert_eq!(server.requests.lock().unwrap().len(), 1);
 }
 
+/// Generate fictional reflection forms that must not appear in public errors or persisted output.
+fn encoded_secret_forms(value: &str) -> Vec<String> {
+    let json = serde_json::to_string(value).unwrap();
+    vec![
+        value.to_owned(),
+        json[1..json.len() - 1].to_owned(),
+        value
+            .chars()
+            .map(|character| format!("\\u{:04x}", u32::from(character)))
+            .collect(),
+        url::form_urlencoded::byte_serialize(value.as_bytes()).collect(),
+        value
+            .replace('&', "&amp;")
+            .replace('"', "&quot;")
+            .replace('<', "&lt;")
+            .replace('>', "&gt;"),
+    ]
+}
+
+/// HTTP failures never persist reflected PATs, hook secrets or unrelated upstream private details.
 #[tokio::test]
-async fn errors_redact_access_and_hook_secrets() {
+async fn http_errors_exclude_encoded_secrets_from_tasks_and_exports() {
+    let access_token = "fictional-access-\"quoted\"&value";
+    let secret = "fictional-hook-\"quoted\"&value";
+    let access_forms = encoded_secret_forms(access_token);
+    let secret_forms = encoded_secret_forms(secret);
+    for status in [400, 500] {
+        for (reflected_access, reflected_secret) in access_forms.iter().zip(&secret_forms) {
+            let existing = hook(7);
+            let mut request = request();
+            request.secret = Some(secret.into());
+            let item =
+                planner::classify_hook(&project(), &request, std::slice::from_ref(&existing), None)
+                    .unwrap();
+            let server = Server::new(vec![
+                reply(200, json!(project())),
+                reply(200, json!([existing])),
+                reply(
+                    status,
+                    json!({
+                        "message": format!("upstream-private-detail {reflected_access} {reflected_secret}"),
+                    }),
+                ),
+            ]);
+            let client = GitLab::new(&server.url, access_token.into()).unwrap();
+            let (directory, service) = service();
+            let mut task = task(vec![item]);
+            runner::execute(
+                &service,
+                &client,
+                &mut task,
+                None,
+                Some(secret),
+                &AtomicBool::new(false),
+                &|| {},
+            )
+            .await
+            .unwrap();
+            let stored = service.db.task(&task.id).unwrap();
+            let exported = runner::report(&stored);
+            assert_eq!(
+                stored.items[0].status,
+                if status == 500 {
+                    ItemStatus::Unknown
+                } else {
+                    ItemStatus::Failed
+                }
+            );
+            assert!(stored.items[0].message.contains(&format!("HTTP {status}")));
+            for output in [
+                stored.items[0].message.as_str(),
+                exported["items"][0]["message"].as_str().unwrap(),
+            ] {
+                assert!(
+                    !output.contains("upstream-private-detail"),
+                    "upstream content reached a stored outcome"
+                );
+                for forbidden in access_forms.iter().chain(&secret_forms) {
+                    assert!(
+                        !output.contains(forbidden),
+                        "encoded credentials reached a stored outcome"
+                    );
+                }
+            }
+            // Inspect the test database and its WAL without touching the real application database.
+            for entry in std::fs::read_dir(directory.path()).unwrap() {
+                let path = entry.unwrap().path();
+                if path.is_file() {
+                    let bytes = std::fs::read(path).unwrap();
+                    for forbidden in access_forms
+                        .iter()
+                        .chain(&secret_forms)
+                        .chain(std::iter::once(&"upstream-private-detail".to_owned()))
+                    {
+                        assert!(
+                            !bytes
+                                .windows(forbidden.len())
+                                .any(|window| window == forbidden.as_bytes()),
+                            "upstream content reached SQLite storage"
+                        );
+                    }
+                }
+            }
+        }
+    }
+}
+
+/// Safe error messages preserve status, operation and write-result uncertainty for every caller.
+#[tokio::test]
+async fn http_error_metadata_is_preserved_without_response_content() {
+    for (method, status) in [
+        (reqwest::Method::GET, 401),
+        (reqwest::Method::POST, 403),
+        (reqwest::Method::PUT, 404),
+        (reqwest::Method::DELETE, 409),
+        (reqwest::Method::GET, 302),
+        (reqwest::Method::PUT, 422),
+        (reqwest::Method::POST, 429),
+        (reqwest::Method::POST, 503),
+        (reqwest::Method::PUT, 418),
+    ] {
+        let server = Server::new(vec![Reply {
+            status,
+            body: json!({"message": format!("response-private-detail {TEST_TOKEN}")}),
+            headers: if status == 302 {
+                "Location: https://other.example.com/response-private-detail\r\n".into()
+            } else {
+                String::new()
+            },
+        }]);
+        let client = server.client();
+        let error = if method == reqwest::Method::GET {
+            client.get::<Value>("user").await.unwrap_err()
+        } else {
+            client
+                .write(method.clone(), "projects/1/hooks", None)
+                .await
+                .unwrap_err()
+        };
+        let public = serde_json::to_value(&error).unwrap();
+        assert_eq!(public["status"], status);
+        assert!(
+            public["message"]
+                .as_str()
+                .unwrap()
+                .contains(method.as_str())
+        );
+        assert!(!public.to_string().contains("response-private-detail"));
+        assert!(!public.to_string().contains(TEST_TOKEN));
+        assert!(!format!("{error:?}").contains("response-private-detail"));
+        assert_eq!(error.is_not_found(), status == 404);
+        assert_eq!(error.write_is_uncertain(), status >= 500);
+        assert_eq!(server.requests.lock().unwrap().len(), 1);
+    }
+}
+
+/// An incomplete failure body cannot replace the already received HTTP status with a body-read error.
+#[tokio::test]
+async fn http_failure_does_not_consume_the_response_body() {
+    let listener = TcpListener::bind("127.0.0.1:0").unwrap();
+    let address = format!("http://{}", listener.local_addr().unwrap());
+    let worker = thread::spawn(move || {
+        let (mut socket, _) = listener.accept().unwrap();
+        socket
+            .set_read_timeout(Some(Duration::from_secs(2)))
+            .unwrap();
+        let mut bytes = Vec::new();
+        let mut buffer = [0; 1024];
+        while !bytes.windows(4).any(|part| part == b"\r\n\r\n") {
+            let read = socket.read(&mut buffer).unwrap();
+            assert!(read > 0);
+            bytes.extend_from_slice(&buffer[..read]);
+        }
+        socket
+            .write_all(
+                b"HTTP/1.1 403 Forbidden\r\nContent-Length: 9999\r\nConnection: close\r\n\r\n",
+            )
+            .unwrap();
+    });
+    let error = GitLab::new(&address, TEST_TOKEN.into())
+        .unwrap()
+        .get::<Value>("user")
+        .await
+        .unwrap_err();
+    worker.join().unwrap();
+    assert!(matches!(
+        error,
+        crate::error::Error::Api { status: 403, .. }
+    ));
+    assert!(!error.write_is_uncertain());
+}
+
+/// Plain reflected credentials are excluded while authentication remains present on the HTTP request.
+#[tokio::test]
+async fn http_errors_exclude_plain_access_and_hook_secrets() {
     let server = Server::new(vec![reply(
         400,
         json!({"message":format!("{TEST_TOKEN} fictional-hook-secret")}),
@@ -520,6 +981,7 @@ async fn errors_redact_access_and_hook_secrets() {
     );
 }
 
+/// A normal run updates and creates approved hooks while preserving all unselected fields.
 #[tokio::test]
 async fn batch_writes_existing_and_missing_hooks_without_changing_unselected_fields() {
     let request = request();
@@ -534,7 +996,7 @@ async fn batch_writes_existing_and_missing_hooks_without_changing_unselected_fie
     created_response.id = 8;
     let server = Server::new(vec![
         reply(200, json!(project())),
-        reply(200, json!(existing)),
+        reply(200, json!([existing])),
         reply(200, json!(expected)),
         reply(200, json!(project())),
         reply(200, json!([])),
@@ -546,6 +1008,7 @@ async fn batch_writes_existing_and_missing_hooks_without_changing_unselected_fie
         &service,
         &server.client(),
         &mut task,
+        None,
         None,
         &AtomicBool::new(false),
         &|| {},
@@ -565,6 +1028,7 @@ async fn batch_writes_existing_and_missing_hooks_without_changing_unselected_fie
     assert_eq!(service.db.task(&task.id).unwrap().status, "completed");
 }
 
+/// An uncertain write stops later items and can be confirmed through reads without another write.
 #[tokio::test]
 async fn uncertain_write_stops_dispatch_and_is_reconciled_without_resending() {
     let existing = hook(7);
@@ -579,7 +1043,7 @@ async fn uncertain_write_stops_dispatch_and_is_reconciled_without_resending() {
     expected.name = Some("Delivery".into());
     let server = Server::new(vec![
         reply(200, json!(project())),
-        reply(200, json!(existing)),
+        reply(200, json!([existing])),
         reply(503, json!({"message":"upstream interrupted"})),
         reply(200, json!(expected)),
     ]);
@@ -591,6 +1055,7 @@ async fn uncertain_write_stops_dispatch_and_is_reconciled_without_resending() {
         &service,
         &server.client(),
         &mut task,
+        None,
         None,
         &AtomicBool::new(false),
         &|| {},
@@ -615,6 +1080,7 @@ async fn uncertain_write_stops_dispatch_and_is_reconciled_without_resending() {
     );
 }
 
+/// A valid reread with a changed field blocks the write instead of overwriting another user's edit.
 #[tokio::test]
 async fn stale_snapshot_prevents_overwriting_another_users_change() {
     let existing = hook(7);
@@ -629,7 +1095,7 @@ async fn stale_snapshot_prevents_overwriting_another_users_change() {
     changed.pipeline_events = true;
     let server = Server::new(vec![
         reply(200, json!(project())),
-        reply(200, json!(changed)),
+        reply(200, json!([changed])),
     ]);
     let (_dir, service) = service();
     let mut task = task(vec![item]);
@@ -638,12 +1104,14 @@ async fn stale_snapshot_prevents_overwriting_another_users_change() {
         &server.client(),
         &mut task,
         None,
+        None,
         &AtomicBool::new(false),
         &|| {},
     )
     .await
     .unwrap();
     assert_eq!(task.items[0].status, ItemStatus::Failed);
+    assert!(task.items[0].message.contains("已与预览不一致"));
     assert!(
         server
             .requests
@@ -683,6 +1151,7 @@ fn restart_preserves_unknown_and_unsent_items_and_export_excludes_payloads() {
     assert!(!report.contains("enable_ssl_verification"));
 }
 
+/// An expiry-only run preserves the existing role and verifies the returned member state.
 #[tokio::test]
 async fn expiry_only_edit_preserves_role_and_confirms_the_member_response() {
     let before = json!({"id":20,"name":"Demo Developer","username":"demo-dev","access_level":30,"expires_at":"2099-12-31"});
@@ -712,6 +1181,7 @@ async fn expiry_only_edit_preserves_role_and_confirms_the_member_response() {
         &service,
         &server.client(),
         &mut task,
+        None,
         None,
         &AtomicBool::new(false),
         &|| {},
@@ -972,6 +1442,7 @@ async fn legacy_hook_writes_omit_names_and_preserve_permission_failures() {
             &server.client(),
             &mut task,
             None,
+            None,
             &AtomicBool::new(false),
             &|| {},
         )
@@ -1104,6 +1575,7 @@ async fn saving_a_connection_keeps_credentials_outside_the_database() {
     );
 }
 
+/// A stop received before dispatch retains unsent work and never sends an HTTP request.
 #[tokio::test]
 async fn stopping_before_dispatch_leaves_work_available_for_resume() {
     let server = Server::new(vec![]);
@@ -1114,6 +1586,7 @@ async fn stopping_before_dispatch_leaves_work_available_for_resume() {
         &service,
         &server.client(),
         &mut task,
+        None,
         None,
         &AtomicBool::new(true),
         &|| {},
