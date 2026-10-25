@@ -1,0 +1,19 @@
+scripts/check-privacy.test.mjs
+  s_a8b0ce63375407::t_dd4a2b31be1db9 9,12-13,18,21-22,52-55,83-99
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.6.22",
+  "base_commit_sha": "9993891bfde74b3d5b930ff258f49ea872626659",
+  "prompts": {},
+  "sessions": {
+    "s_a8b0ce63375407": {
+      "agent_id": {
+        "tool": "codex",
+        "id": "01a15396-cfee-77d1-8c8c-0dd9550a193f",
+        "model": "gpt-6.1-sol"
+      },
+      "human_author": "bujueyunjian <bbujueyunjian@gmail.com>"
+    }
+  }
+}
