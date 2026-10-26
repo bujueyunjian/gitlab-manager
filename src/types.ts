@@ -185,4 +185,8 @@ export interface PermissionRequest {
   updateExpiry: boolean;
   expiresAt: string | null;
 }
-export type Page = "repos" | "hooks" | "permissions" | "tasks" | "connections";
+/** Primary tasks keep independent repository scopes and drafts. */
+export type TaskKind = "hooks" | "permissions";
+export type Page = "home" | TaskKind | "tasks" | "connections";
+/** Scans and submissions hold navigation until their connection-bound response settles. */
+export type OperationRunner = <T>(work: () => Promise<T>) => Promise<T>;

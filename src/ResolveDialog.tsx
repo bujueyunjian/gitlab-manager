@@ -3,7 +3,7 @@ import { useMutation } from "@tanstack/react-query";
 import { ArrowRight, Search } from "lucide-react";
 import { api, errorMessage } from "./api";
 import { inputLines, resolvedSelection } from "./domain";
-import type { Project } from "./types";
+import type { OperationRunner, Project } from "./types";
 import { Badge, Button, Dialog, ErrorBox } from "./ui";
 import { ReadProgressView } from "./ReadProgress";
 import { useReadProgress } from "./useReadProgress";
@@ -13,18 +13,22 @@ export function ResolveDialog({
   connectionId,
   onClose,
   onSelect,
+  runOperation,
 }: {
   connectionId: string;
   onClose: () => void;
   onSelect: (projects: Project[]) => void;
+  runOperation: OperationRunner;
 }) {
   const [text, setText] = useState("");
   const [choices, setChoices] = useState<Record<number, number>>({});
   const progress = useReadProgress(connectionId);
   const search = useMutation({
     mutationFn: () =>
-      progress.track(inputLines(text).length, (report) =>
-        api.resolve(connectionId, inputLines(text), report),
+      runOperation(() =>
+        progress.track(inputLines(text).length, (report) =>
+          api.resolve(connectionId, inputLines(text), report),
+        ),
       ),
     onSuccess: () => setChoices({}),
   });

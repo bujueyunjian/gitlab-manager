@@ -29,6 +29,7 @@ export function Dialog({
   drawer = false,
   busy = false,
   bodyKey,
+  presentation = "dialog",
 }: {
   title: string;
   description?: string;
@@ -39,13 +40,33 @@ export function Dialog({
   drawer?: boolean;
   busy?: boolean;
   bodyKey?: string;
+  presentation?: "dialog" | "page";
 }) {
   const ref = useRef<HTMLDialogElement>(null);
   useEffect(() => {
+    if (presentation === "page") return;
     const dialog = ref.current!;
     dialog.showModal();
     return () => dialog.close();
-  }, []);
+  }, [presentation]);
+  if (presentation === "page")
+    return (
+      <section className="workflow-page">
+        <header className="workflow-heading">
+          <div>
+            <h1>{title}</h1>
+            {description && <p>{description}</p>}
+          </div>
+          <Button disabled={busy} onClick={onClose}>
+            返回任务
+          </Button>
+        </header>
+        <div key={bodyKey} className="workflow-body">
+          {children}
+        </div>
+        {footer && <footer className="workflow-footer">{footer}</footer>}
+      </section>
+    );
   return (
     <dialog
       ref={ref}
@@ -106,5 +127,19 @@ export function Loading({ children = "正在读取…" }: { children?: ReactNode
       <LoaderCircle className="spin" size={18} />
       {children}
     </div>
+  );
+}
+
+/** Keep the same task path visible across scope, selection, configuration and real execution results. */
+export function TaskSteps({ step }: { step: number }) {
+  return (
+    <ol className="task-steps" aria-label="任务步骤">
+      {["仓库范围", "检查与选择", "配置", "预览", "结果"].map((label, index) => (
+        <li key={label} aria-current={index === step ? "step" : undefined}>
+          <span>{index + 1}</span>
+          {label}
+        </li>
+      ))}
+    </ol>
   );
 }

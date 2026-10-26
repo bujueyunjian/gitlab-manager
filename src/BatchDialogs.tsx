@@ -1,7 +1,8 @@
-import { useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { useMutation } from "@tanstack/react-query";
 import { ArrowRight, Search } from "lucide-react";
 import { api, errorMessage } from "./api";
+import { buildHookRequest, initialHookMatchUrl, initialHookSettings } from "./hookDraft";
 import { actionLabels, eventLabels, roles, supportsWebhookNames } from "./domain";
 import type {
   Connection,
@@ -10,13 +11,14 @@ import type {
   HookRequest,
   HookRow,
   MemberRow,
+  OperationRunner,
   PermissionRequest,
   Plan,
   Project,
   Task,
   User,
 } from "./types";
-import { Badge, Button, Dialog, ErrorBox } from "./ui";
+import { Badge, Button, Dialog, ErrorBox, TaskSteps } from "./ui";
 
 function Preview({
   plan,
@@ -154,6 +156,11 @@ export function HookDialog({
   onClose,
   onStarted,
   notify,
+  presentation = "dialog",
+  active = true,
+  guided = false,
+  creationCount = 0,
+  runOperation,
 }: {
   connection: Connection;
   projects: Project[];
@@ -164,70 +171,95 @@ export function HookDialog({
   onClose: () => void;
   onStarted: (task: Task) => void;
   notify: (message: string, error?: boolean) => void;
+  presentation?: "dialog" | "page";
+  active?: boolean;
+  guided?: boolean;
+  creationCount?: number;
+  runOperation: OperationRunner;
 }) {
   const first = rows[0]?.hook;
   const namesSupported = supportsWebhookNames(connection.version);
-  const [mode, setMode] = useState(initialMode);
-  const [matchUrl, setMatchUrl] = useState(first?.url ?? initialUrl);
-  const [name, setName] = useState(first?.name ?? initialName);
+  const mode = initialMode;
+  const creating = mode === "create" || creationCount > 0;
+  const mixed = creating && rows.length > 0;
+  const initial = initialHookSettings(rows, initialName, creating);
+  const [matchUrl, setMatchUrl] = useState(initialHookMatchUrl(guided, initialUrl, rows));
+  const [name, setName] = useState(initial.name);
   const [url, setUrl] = useState(first?.url ?? "");
-  const [events, setEvents] = useState<HookEvents>({
-    push_events: first?.push_events ?? true,
-    merge_requests_events: first?.merge_requests_events ?? true,
-    pipeline_events: first?.pipeline_events ?? false,
-    issues_events: first?.issues_events ?? false,
-    tag_push_events: first?.tag_push_events ?? false,
-  });
-  const [ssl, setSsl] = useState(first?.enable_ssl_verification ?? true);
+  const [events, setEvents] = useState<HookEvents>(initial.events);
+  const [ssl, setSsl] = useState(initial.ssl);
   const [fields, setFields] = useState({
-    name: namesSupported && initialMode !== "update",
+    name: namesSupported && initialMode === "create",
     url: false,
-    events: initialMode !== "update",
-    ssl: initialMode !== "update",
+    events: initialMode === "create",
+    ssl: initialMode === "create",
     secret: false,
   });
   const [secret, setSecret] = useState("");
   const [confirmed, setConfirmed] = useState(false);
   const [plan, setPlan] = useState<Plan | null>(null);
+  const preparedId = useRef<string | null>(null);
+  useEffect(
+    () => () => {
+      const id = preparedId.current;
+      preparedId.current = null;
+      if (id) void api.discardPlan(id).catch((error) => notify(errorMessage(error), true));
+    },
+    [],
+  );
   const [choices, setChoices] = useState<Record<string, number>>({});
-  const request = (overrides = choices): HookRequest => ({
-    connectionId: connection.id,
-    projectIds: projects.map((project) => project.id),
-    targets: rows.map((row) => ({ projectId: row.project.id, hookId: row.hook.id })),
-    mode,
-    matchUrl,
-    name: namesSupported && fields.name ? name : null,
-    url: fields.url ? url : null,
-    events: fields.events ? events : null,
-    ssl: fields.ssl ? ssl : null,
-    secret: fields.secret ? secret : null,
-    choices: overrides,
-    creation:
-      mode === "ensure" || mode === "create"
-        ? { name: namesSupported ? name : null, events, ssl }
-        : null,
-  });
+  const request = (overrides = choices): HookRequest =>
+    buildHookRequest({
+      connectionId: connection.id,
+      projects,
+      rows,
+      mode,
+      matchUrl,
+      name,
+      url,
+      events,
+      ssl,
+      secret,
+      fields,
+      namesSupported,
+      choices: overrides,
+    });
   const scan = useMutation({
-    mutationFn: (override: Record<string, number>) => api.previewHooks(request(override)),
-    onSuccess: setPlan,
+    mutationFn: (override: Record<string, number>) =>
+      runOperation(() => api.previewHooks(request(override))),
+    onSuccess: (value) => {
+      preparedId.current = value.id;
+      setPlan(value);
+    },
   });
   const execute = useMutation({
-    mutationFn: () => api.startPlan(plan!.id),
+    mutationFn: () => runOperation(() => api.startPlan(plan!.id)),
     onSuccess: (task) => {
+      preparedId.current = null;
       setSecret("");
       onStarted(task);
     },
   });
   const busy = scan.isPending || execute.isPending;
+  useEffect(() => {
+    if (active) return;
+    clearPlan();
+    setSecret("");
+  }, [active]);
   const needsConfirmation = mode === "delete";
   const executable =
     plan?.items.some((item) => item.status === "pending") &&
     !plan.items.some((item) => item.action === "conflict") &&
     (!needsConfirmation || confirmed);
+  /** Discard the exact prepared plan while retaining editable settings. */
   function clearPlan() {
-    if (plan) void api.discardPlan(plan.id).catch((error) => notify(errorMessage(error), true));
+    const id = preparedId.current;
+    preparedId.current = null;
+    if (id) void api.discardPlan(id).catch((error) => notify(errorMessage(error), true));
     setPlan(null);
     setConfirmed(false);
+    scan.reset();
+    execute.reset();
   }
   function close() {
     clearPlan();
@@ -242,6 +274,7 @@ export function HookDialog({
         : "批量设置 Webhook";
   return (
     <Dialog
+      presentation={presentation}
       title={title}
       bodyKey={plan?.id ?? "settings"}
       description={
@@ -291,7 +324,7 @@ export function HookDialog({
         </>
       }
     >
-      <Steps preview={!!plan} />
+      {presentation === "page" ? <TaskSteps step={plan ? 3 : 2} /> : <Steps preview={!!plan} />}
       {!plan ? (
         <>
           <Targets projects={projects} />
@@ -301,35 +334,9 @@ export function HookDialog({
             </div>
           ) : (
             <>
-              {!rows.length && (
-                <div className="batch-mode">
-                  {[
-                    ["ensure", "补齐并更新", "缺失时创建，已有时更新所选字段"],
-                    ["create", "仅新增", "已有相同地址时跳过"],
-                    ["update", "仅修改", "不存在时不创建"],
-                  ].map(([value, label, detail]) => (
-                    <label className="mode-card" key={value}>
-                      <input
-                        type="radio"
-                        checked={mode === value}
-                        onChange={() => {
-                          setMode(value as HookRequest["mode"]);
-                          if (value === "create")
-                            setFields({ ...fields, name: namesSupported, events: true, ssl: true });
-                          setChoices({});
-                        }}
-                      />
-                      <span>
-                        <strong>{label}</strong>
-                        <small>{detail}</small>
-                      </span>
-                    </label>
-                  ))}
-                </div>
-              )}
-              {!rows.length && (
+              {(!rows.length || creationCount > 0) && (
                 <label className="form-field full">
-                  <span>匹配的 Webhook 地址</span>
+                  <span>{guided ? "新增配置使用的 Webhook 地址" : "匹配的 Webhook 地址"}</span>
                   <input
                     value={matchUrl}
                     onChange={(e) => {
@@ -344,25 +351,43 @@ export function HookDialog({
               )}
               <div className="form-section">
                 <h3>要设置的内容</h3>
-                <p className="scope-caption">已有项只更新选中的字段。新增项使用完整配置。</p>
+                <p className="scope-caption">
+                  {mode === "create"
+                    ? "填写新增配置，下一步逐仓库预览。"
+                    : mixed
+                      ? "新增使用完整设置；已有只改明确勾选的字段。"
+                      : "只改明确勾选的字段，其他设置保持。"}
+                </p>
                 {namesSupported ? (
                   <div className="edit-field">
-                    <label className="check-label">
+                    {mode === "create" ? (
+                      <span>名称（新增必填）</span>
+                    ) : (
+                      <label className="check-label">
+                        <input
+                          type="checkbox"
+                          checked={fields.name}
+                          onChange={(e) => setFields({ ...fields, name: e.target.checked })}
+                        />
+                        {mixed ? "同时修改已有配置的名称" : "修改名称"}
+                      </label>
+                    )}
+                    <div>
                       <input
-                        type="checkbox"
-                        checked={fields.name}
-                        disabled={mode === "create"}
-                        onChange={(e) => setFields({ ...fields, name: e.target.checked })}
+                        aria-label="Webhook 名称"
+                        value={name}
+                        disabled={!creating && !fields.name}
+                        onChange={(e) => setName(e.target.value)}
+                        placeholder="例如：研发通知"
                       />
-                      名称
-                    </label>
-                    <input
-                      aria-label="Webhook 名称"
-                      value={name}
-                      disabled={mode === "update" && !fields.name}
-                      onChange={(e) => setName(e.target.value)}
-                      placeholder="例如：研发通知"
-                    />
+                      {creating && (
+                        <small>
+                          {mode === "create"
+                            ? "新增配置的名称必填。"
+                            : "新增名称必填；上方开关仅控制是否同时改名已有配置。"}
+                        </small>
+                      )}
+                    </div>
                   </div>
                 ) : (
                   <p className="scope-caption">
@@ -370,21 +395,24 @@ export function HookDialog({
                   </p>
                 )}
                 <div className="edit-field">
-                  <label className="check-label">
-                    <input
-                      type="checkbox"
-                      checked={fields.events}
-                      disabled={mode === "create"}
-                      onChange={(e) => setFields({ ...fields, events: e.target.checked })}
-                    />
-                    触发事件
-                  </label>
+                  {mode === "create" ? (
+                    <span>触发事件（新增配置）</span>
+                  ) : (
+                    <label className="check-label">
+                      <input
+                        type="checkbox"
+                        checked={fields.events}
+                        onChange={(e) => setFields({ ...fields, events: e.target.checked })}
+                      />
+                      {mixed ? "同时修改已有配置的触发事件" : "修改触发事件"}
+                    </label>
+                  )}
                   <div className="checkbox-grid">
                     {Object.entries(eventLabels).map(([key, label]) => (
                       <label className="check-label" key={key}>
                         <input
                           type="checkbox"
-                          disabled={mode === "update" && !fields.events}
+                          disabled={!creating && !fields.events}
                           checked={events[key as keyof HookEvents]}
                           onChange={(e) => setEvents({ ...events, [key]: e.target.checked })}
                         />
@@ -393,7 +421,10 @@ export function HookDialog({
                     ))}
                   </div>
                 </div>
-                <p className="scope-caption">更新触发事件时，勾选的事件开启，未勾选的事件关闭。</p>
+                <p className="scope-caption">
+                  {creating ? "新增使用下方完整配置。" : ""}
+                  修改已有触发事件时，勾选的事件开启，未勾选的事件关闭；未选择修改开关时，已有的五种事件保持。
+                </p>
                 <div className="edit-field">
                   <label className="check-label">
                     <input
@@ -419,43 +450,55 @@ export function HookDialog({
                 </div>
                 <details className="help-details">
                   <summary>地址与 TLS 设置</summary>
-                  <div className="edit-field">
-                    <label className="check-label">
+                  {mode !== "create" && (
+                    <div className="edit-field">
+                      <label className="check-label">
+                        <input
+                          type="checkbox"
+                          checked={fields.url}
+                          onChange={(e) => setFields({ ...fields, url: e.target.checked })}
+                        />
+                        {mixed ? "同时更换已有配置的目标地址" : "更换目标地址"}
+                      </label>
                       <input
-                        type="checkbox"
-                        checked={fields.url}
-                        onChange={(e) => setFields({ ...fields, url: e.target.checked })}
+                        aria-label="新的 Webhook 地址"
+                        disabled={!fields.url}
+                        value={url}
+                        onChange={(e) => setUrl(e.target.value)}
+                        placeholder="新的接收地址"
                       />
-                      更换目标地址
-                    </label>
-                    <input
-                      aria-label="新的 Webhook 地址"
-                      disabled={!fields.url}
-                      value={url}
-                      onChange={(e) => setUrl(e.target.value)}
-                      placeholder="新的接收地址"
-                    />
-                  </div>
+                    </div>
+                  )}
                   <div className="edit-field">
+                    {mode === "create" ? (
+                      <span>TLS 证书校验（新增配置）</span>
+                    ) : (
+                      <label className="check-label">
+                        <input
+                          type="checkbox"
+                          checked={fields.ssl}
+                          onChange={(e) => setFields({ ...fields, ssl: e.target.checked })}
+                        />
+                        {mixed ? "同时修改已有配置的 TLS 校验" : "修改 TLS 校验"}
+                      </label>
+                    )}
                     <label className="check-label">
                       <input
                         type="checkbox"
-                        checked={fields.ssl}
-                        disabled={mode === "create"}
-                        onChange={(e) => setFields({ ...fields, ssl: e.target.checked })}
-                      />
-                      TLS 校验
-                    </label>
-                    <label className="check-label">
-                      <input
-                        type="checkbox"
-                        disabled={mode === "update" && !fields.ssl}
+                        disabled={!creating && !fields.ssl}
                         checked={ssl}
                         onChange={(e) => setSsl(e.target.checked)}
                       />
                       验证接收端证书
                     </label>
                   </div>
+                  {creating && (
+                    <p className="scope-caption">
+                      {mode === "create"
+                        ? "新增配置默认验证接收端证书。"
+                        : "新增默认验证接收端证书；未勾选修改开关时，已有校验设置保持。"}
+                    </p>
+                  )}
                 </details>
               </div>
             </>
@@ -502,6 +545,9 @@ export function PermissionDialog({
   onClose,
   onStarted,
   notify,
+  presentation = "dialog",
+  active = true,
+  runOperation,
 }: {
   connection: Connection;
   projects: Project[];
@@ -512,6 +558,9 @@ export function PermissionDialog({
   onClose: () => void;
   onStarted: (task: Task) => void;
   notify: (message: string, error?: boolean) => void;
+  presentation?: "dialog" | "page";
+  active?: boolean;
+  runOperation: OperationRunner;
 }) {
   const [kind, setKind] = useState<"user" | "group">("user");
   const [search, setSearch] = useState("");
@@ -521,6 +570,15 @@ export function PermissionDialog({
   const [updateExpiry, setUpdateExpiry] = useState(false);
   const [expiry, setExpiry] = useState("");
   const [plan, setPlan] = useState<Plan | null>(null);
+  const preparedId = useRef<string | null>(null);
+  useEffect(
+    () => () => {
+      const id = preparedId.current;
+      preparedId.current = null;
+      if (id) void api.discardPlan(id).catch((error) => notify(errorMessage(error), true));
+    },
+    [],
+  );
   const [confirmed, setConfirmed] = useState(false);
   const lookup = useMutation({
     mutationFn: async () =>
@@ -538,15 +596,33 @@ export function PermissionDialog({
     expiresAt: expiry || null,
   });
   const scan = useMutation({
-    mutationFn: () => api.previewPermissions(request()),
-    onSuccess: setPlan,
+    mutationFn: () => runOperation(() => api.previewPermissions(request())),
+    onSuccess: (value) => {
+      preparedId.current = value.id;
+      setPlan(value);
+    },
   });
-  const execute = useMutation({ mutationFn: () => api.startPlan(plan!.id), onSuccess: onStarted });
+  const execute = useMutation({
+    mutationFn: () => runOperation(() => api.startPlan(plan!.id)),
+    onSuccess: (value) => {
+      preparedId.current = null;
+      onStarted(value);
+    },
+  });
   const busy = scan.isPending || execute.isPending;
+  useEffect(() => {
+    if (active) return;
+    clearPlan();
+  }, [active]);
+  /** Discard the exact prepared plan while retaining editable settings. */
   function clearPlan() {
-    if (plan) void api.discardPlan(plan.id).catch((e) => notify(errorMessage(e), true));
+    const id = preparedId.current;
+    preparedId.current = null;
+    if (id) void api.discardPlan(id).catch((e) => notify(errorMessage(e), true));
     setPlan(null);
     setConfirmed(false);
+    scan.reset();
+    execute.reset();
   }
   function close() {
     clearPlan();
@@ -557,6 +633,7 @@ export function PermissionDialog({
     plan?.items.some((item) => item.status === "pending") && (!deleting || confirmed);
   return (
     <Dialog
+      presentation={presentation}
       title={deleting ? "批量撤销授权" : initialMode === "update" ? "批量修改授权" : "批量授权"}
       bodyKey={plan?.id ?? "settings"}
       description={
@@ -603,7 +680,7 @@ export function PermissionDialog({
         </>
       }
     >
-      <Steps preview={!!plan} />
+      {presentation === "page" ? <TaskSteps step={plan ? 3 : 2} /> : <Steps preview={!!plan} />}
       {plan ? (
         <>
           <Preview plan={plan} />

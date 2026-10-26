@@ -2,7 +2,7 @@ import { useState } from "react";
 import { useMutation } from "@tanstack/react-query";
 import { KeyRound, Plus, Server, ShieldCheck, Trash2 } from "lucide-react";
 import { api, desktop, errorMessage } from "./api";
-import type { Connection } from "./types";
+import type { Connection, OperationRunner } from "./types";
 import { Badge, Button, Dialog, ErrorBox } from "./ui";
 import { dateTime, tokenScopeLabel } from "./domain";
 
@@ -11,16 +11,19 @@ export function ConnectionDialog({
   connection,
   onClose,
   onSaved,
+  runOperation,
 }: {
   connection?: Connection;
   onClose: () => void;
   onSaved: (connection: Connection) => void;
+  runOperation: OperationRunner;
 }) {
   const [name, setName] = useState(connection?.name ?? "");
   const [baseUrl, setBaseUrl] = useState(connection?.baseUrl ?? "");
   const [token, setToken] = useState("");
   const save = useMutation({
-    mutationFn: () => api.saveConnection({ id: connection?.id ?? null, name, baseUrl, token }),
+    mutationFn: () =>
+      runOperation(() => api.saveConnection({ id: connection?.id ?? null, name, baseUrl, token })),
     onSuccess: (value) => {
       setToken("");
       onSaved(value);

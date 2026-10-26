@@ -3,8 +3,8 @@ import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { Download, Pause, Play, Search } from "lucide-react";
 import { api, errorMessage } from "./api";
 import { actionLabels, dateTime, statusLabels, taskCounts } from "./domain";
-import type { ItemStatus, Task } from "./types";
-import { Badge, Button, Dialog, Empty, ErrorBox, Loading } from "./ui";
+import type { ItemStatus, OperationRunner, Task } from "./types";
+import { Badge, Button, Dialog, Empty, ErrorBox, Loading, TaskSteps } from "./ui";
 import { refreshTasks } from "./taskQueries";
 
 const taskLabels = {
@@ -114,14 +114,19 @@ export function Tasks({ tasks, onOpen }: { tasks: Task[]; onOpen: (id: string) =
   );
 }
 
+/** Present real stored outcomes, export and scoped recovery either in the task page or record drawer. */
 export function TaskDialog({
   taskId,
   onClose,
   notify,
+  presentation = "dialog",
+  runOperation,
 }: {
   taskId: string;
   onClose: () => void;
   notify: (message: string, error?: boolean) => void;
+  presentation?: "dialog" | "page";
+  runOperation: OperationRunner;
 }) {
   const queryClient = useQueryClient();
   const query = useQuery({ queryKey: ["task", taskId], queryFn: () => api.task(taskId) });
@@ -135,7 +140,7 @@ export function TaskDialog({
   const [confirmItem, setConfirmItem] = useState<string | null>(null);
   const [note, setNote] = useState("");
   const run = useMutation({
-    mutationFn: (operation: () => Promise<unknown>) => operation(),
+    mutationFn: (operation: () => Promise<unknown>) => runOperation(operation),
     onSuccess: async () => {
       await refreshTasks(queryClient);
       setSelected(new Set());
@@ -163,11 +168,14 @@ export function TaskDialog({
   return (
     <>
       <Dialog
+        presentation={presentation}
+        busy={run.isPending}
         title={task?.title ?? "任务详情"}
         description={task ? `${task.connectionName} · ${dateTime(task.createdAt)}` : undefined}
         drawer
         onClose={onClose}
       >
+        {presentation === "page" && <TaskSteps step={4} />}
         {query.isPending && <Loading />}
         {query.error && <ErrorBox message={errorMessage(query.error)} />}
         {task && counts && (
